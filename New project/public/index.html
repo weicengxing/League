@@ -8,6 +8,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
+  <!-- 全局认证检查脚本 -->
+  <script src="/auth-check.js"></script>
 </head>
 <body>
   <div class="board-page">
@@ -15,6 +17,13 @@
       <div class="board-top__brand">
         <p class="board-eyebrow">XUNDAO DQ · ALLIANCE BOARD</p>
         <h1 id="allianceName">青云联盟</h1>
+      </div>
+      <div class="board-top__actions">
+        <span id="userInfo" class="user-info hidden">
+          <span class="user-username"></span>
+          <button id="logoutBtn" type="button" class="logout-btn">退出</button>
+        </span>
+        <a href="login.html" id="loginLink" class="login-link">登录</a>
       </div>
       <div class="board-top__stats">
         <span id="memberCount">0 名成员</span>
@@ -29,7 +38,6 @@
       <button class="top-pills__btn" data-view="guildAdmin">＋ 录入新妖盟</button>
       <button class="top-pills__btn" data-view="melon">🍉 瓜棚</button>
       <button class="top-pills__btn" data-view="announcementAdmin">📣 发布动态</button>
-      <button class="top-pills__btn" data-view="login">👤 用户登录</button>
     </nav>
 
     <main class="board-layout">
@@ -114,24 +122,6 @@
               <h2>🍉 联盟瓜棚</h2>
             </div>
             <div id="melonList" class="feed-list"></div>
-          </article>
-        </section>
-
-        <section class="board-panel" data-panel="login">
-          <article class="panel-card">
-            <div class="panel-card__head">
-              <h2>👤 用户登录</h2>
-            </div>
-
-            <div class="login-box">
-              <div class="login-state" id="loginState">未登录</div>
-              <form id="loginForm" class="login-form">
-                <input id="username" type="text" placeholder="管理员账号" value="admin" required>
-                <input id="password" type="password" placeholder="管理员密码" value="123456" required>
-                <button type="submit" class="primary-btn">管理员登录</button>
-              </form>
-              <button type="button" class="ghost-btn hidden" id="logoutBtn">退出登录</button>
-            </div>
           </article>
         </section>
 

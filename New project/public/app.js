@@ -3,6 +3,7 @@ const state = {
   members: [],
   announcements: [],
   me: { authenticated: false, admin: null },
+  user: null,
   currentView: "guilds",
   selectedGuild: null,
   search: "",
@@ -171,7 +172,7 @@ function bindEvents() {
   els.logoutBtn?.addEventListener("click", handleLogout);
   els.refreshBtn?.addEventListener("click", async () => {
     await refreshAll();
-    toast("数据已刷新");
+    toast("������ˢ��");
   });
   els.memberForm?.addEventListener("submit", handleMemberSubmit);
   els.resetMemberBtn?.addEventListener("click", resetMemberForm);
@@ -187,14 +188,74 @@ function bindEvents() {
   document.addEventListener("keydown", handleModalKeydown);
 }
 
+// 全局退出登录函�?
+window.handleLogout = async function() {
+  return handleLogout();
+};
+
 async function boot() {
   try {
+    await checkLoginStatus();
     await refreshAll();
   } catch (error) {
     console.error(error);
-    toast(`页面初始化失败：${error.message}`);
+    toast(`Page initialization failed: ${error.message}`);
   }
   renderView();
+}
+
+// 检查登录状态并更新右上角按�?
+async function checkLoginStatus() {
+  try {
+    const response = await fetch('/api/auth/check', {
+      method: 'POST',
+      credentials: 'include'
+    });
+    const data = await response.json();
+
+    if (data.valid) {
+      const username = data.user?.username || data.user?.display_name || readStoredUsername();
+      updateTopBarAuth(true, username);
+      return;
+    }
+
+    localStorage.removeItem('alliance_user');
+    updateTopBarAuth(false);
+  } catch (e) {
+    updateTopBarAuth(false);
+  }
+}
+
+function updateTopBarAuth(authenticated, username = "") {
+  const loginLink = document.querySelector('#loginLink');
+  const logoutBtn = document.querySelector('#logoutBtn');
+  const userInfo = document.querySelector('#userInfo');
+  const usernameEl = userInfo?.querySelector('.user-username');
+
+  if (loginLink) {
+    loginLink.classList.toggle('hidden', authenticated);
+  }
+  if (logoutBtn) {
+    logoutBtn.classList.toggle('hidden', !authenticated);
+  }
+  if (userInfo) {
+    userInfo.classList.toggle('hidden', !authenticated);
+  }
+  if (usernameEl) {
+    usernameEl.textContent = authenticated ? username : '';
+  }
+}
+
+function readStoredUsername() {
+  const storedUser = localStorage.getItem('alliance_user');
+  if (!storedUser) return '';
+
+  try {
+    const user = JSON.parse(storedUser);
+    return user.username || '';
+  } catch (e) {
+    return '';
+  }
 }
 
 async function refreshAll() {
@@ -248,6 +309,32 @@ async function fetchAnnouncements() {
 async function fetchMe() {
   state.me = await request("/api/me");
   renderAuth();
+}
+
+// 获取普通用户信�?
+async function fetchUser() {
+  try {
+    const response = await fetch("/api/auth/me", {
+      credentials: "include"
+    });
+    const data = await response.json();
+    if (data.authenticated && data.user) {
+      state.user = data.user;
+    }
+  } catch (e) {
+    // 忽略错误
+  }
+  renderUserInfo();
+}
+
+// 显示用户信息
+function renderUserInfo() {
+  if (state.user) {
+    updateTopBarAuth(true, state.user.username || state.user.display_name || '');
+    return;
+  }
+
+  updateTopBarAuth(false);
 }
 
 function renderDashboard() {
@@ -354,7 +441,7 @@ function renderGuildSummary() {
   if (!els.guildSummary) return;
   const hills = getVisibleHills();
   if (!hills.length) {
-    els.guildSummary.innerHTML = `<article class="empty-card">暂无符合条件的妖盟数据。</article>`;
+    els.guildSummary.innerHTML = `<article class="empty-card">暂无符合条件的妖盟数据�?</article>`;
     return;
   }
 
@@ -375,12 +462,12 @@ function renderGuildCard(guild) {
   const [first, second] = guild.leaders;
   return `
     <article class="guild-card">
-      <div class="guild-card__badge">${guild.count}人</div>
+      <div class="guild-card__badge">${guild.count}�?</div>
       <div class="guild-card__title-row">
         <h3>${escapeHtml(guild.displayName)}</h3>
         <span class="guild-card__mark">${guild.rank <= 3 ? "🌟" : "🔸"}</span>
       </div>
-      <p class="guild-card__power-label">总战力: <strong>${formatNumber(getGuildPower(guild))}</strong></p>
+      <p class="guild-card__power-label">总战�? <strong>${formatNumber(getGuildPower(guild))}</strong></p>
       <div class="guild-card__leaders">
         <div class="guild-card__leader">
           <span>🏆 车头1:</span>
@@ -393,8 +480,8 @@ function renderGuildCard(guild) {
           <b>${second ? formatNumber(second.power) : "-"}</b>
         </div>
       </div>
-      <p class="guild-card__update">最后更新: ${escapeHtml(guild.updatedAt || "暂无记录")}</p>
-      <button type="button" class="guild-card__action" data-open-guild="${escapeHtml(guild.key)}">📊 查看妖盟全成员战力</button>
+      <p class="guild-card__update">最后更�? ${escapeHtml(guild.updatedAt || "暂无记录")}</p>
+      <button type="button" class="guild-card__action" data-open-guild="${escapeHtml(guild.key)}">📊 查看妖盟全成员战�?</button>
     </article>
   `;
 }
@@ -403,36 +490,36 @@ function renderGuildDetail() {
   if (!els.guildDetailList || !els.guildDetailTitle || !els.guildDetailMeta) return;
   if (!state.selectedGuild) {
     els.guildDetailTitle.textContent = "妖盟详情";
-    els.guildDetailMeta.textContent = "点击妖盟卡片可查看完整成员信息。";
+    els.guildDetailMeta.textContent = "������˿�Ƭ�ɲ鿴������Ա��Ϣ";
     if (els.guildDetailActions) els.guildDetailActions.innerHTML = "";
     if (els.guildDetailSearch) els.guildDetailSearch.value = "";
     if (els.guildDetailRoleFilter) els.guildDetailRoleFilter.innerHTML = `<option value="all">全部职位</option>`;
-    els.guildDetailList.innerHTML = `<article class="empty-card">请选择一个妖盟查看详情。</article>`;
+    els.guildDetailList.innerHTML = `<article class="empty-card">请选择一个妖盟查看详情�?</article>`;
     return;
   }
 
   const detail = getGuildDetail(state.selectedGuild);
   if (!detail) {
     els.guildDetailTitle.textContent = "妖盟详情";
-    els.guildDetailMeta.textContent = "当前妖盟未找到。";
+    els.guildDetailMeta.textContent = "��ǰ����δ�ҵ�";
     if (els.guildDetailActions) els.guildDetailActions.innerHTML = "";
     if (els.guildDetailSearch) els.guildDetailSearch.value = "";
     if (els.guildDetailRoleFilter) els.guildDetailRoleFilter.innerHTML = `<option value="all">全部职位</option>`;
-    els.guildDetailList.innerHTML = `<article class="empty-card">没有找到该妖盟的数据。</article>`;
+    els.guildDetailList.innerHTML = `<article class="empty-card">没有找到该妖盟的数据�?</article>`;
     return;
   }
 
   els.guildDetailTitle.textContent = detail.name;
-  els.guildDetailMeta.textContent = `${detail.hill} · ${detail.members.length} 名成员 · 总战力 ${formatNumber(detail.power)}`;
+  els.guildDetailMeta.textContent = `${detail.hill} · ${detail.members.length} 名成�?· 总战�?${formatNumber(detail.power)}`;
   renderGuildDetailFilters(detail.members);
   if (els.guildDetailActions) {
     els.guildDetailActions.innerHTML = state.me.authenticated
       ? `<button type="button" class="primary-btn" data-action="add-member">新增成员</button>`
-      : `<button type="button" class="ghost-btn" data-action="go-login">登录后管理成员</button>`;
+      : `<button type="button" class="ghost-btn" data-action="go-login">登录后管理成�?</button>`;
   }
   const filteredMembers = getFilteredGuildMembers(detail.members);
   if (!filteredMembers.length) {
-    els.guildDetailList.innerHTML = `<article class="empty-card">没有找到符合条件的成员。</article>`;
+    els.guildDetailList.innerHTML = `<article class="empty-card">没有找到符合条件的成员�?</article>`;
     return;
   }
   const page = paginateItems(filteredMembers, state.guildDetailPage, 6);
@@ -529,9 +616,9 @@ function renderSimplePagination(kind, page) {
   if (page.totalPages <= 1) return "";
   return `
     <div class="hill-pagination">
-      <button type="button" class="hill-pagination__btn" data-pagination-kind="${kind}" data-page-action="prev" ${page.currentPage === 1 ? "disabled" : ""}>上一页</button>
-      <span class="hill-pagination__info">第 ${page.currentPage} / ${page.totalPages} 页</span>
-      <button type="button" class="hill-pagination__btn" data-pagination-kind="${kind}" data-page-action="next" ${page.currentPage === page.totalPages ? "disabled" : ""}>下一页</button>
+      <button type="button" class="hill-pagination__btn" data-pagination-kind="${kind}" data-page-action="prev" ${page.currentPage === 1 ? "disabled" : ""}>上一�?</button>
+      <span class="hill-pagination__info">�?${page.currentPage} / ${page.totalPages} �?</span>
+      <button type="button" class="hill-pagination__btn" data-pagination-kind="${kind}" data-page-action="next" ${page.currentPage === page.totalPages ? "disabled" : ""}>下一�?</button>
     </div>
   `;
 }
@@ -575,9 +662,9 @@ function renderHillPagination(hill) {
   if (page.totalPages <= 1) return "";
   return `
     <div class="hill-pagination">
-      <button type="button" class="hill-pagination__btn" data-hill-page="${escapeHtml(hill.name)}" data-page-action="prev" ${page.currentPage === 1 ? "disabled" : ""}>上一页</button>
-      <span class="hill-pagination__info">第 ${page.currentPage} / ${page.totalPages} 页</span>
-      <button type="button" class="hill-pagination__btn" data-hill-page="${escapeHtml(hill.name)}" data-page-action="next" ${page.currentPage === page.totalPages ? "disabled" : ""}>下一页</button>
+      <button type="button" class="hill-pagination__btn" data-hill-page="${escapeHtml(hill.name)}" data-page-action="prev" ${page.currentPage === 1 ? "disabled" : ""}>上一�?</button>
+      <span class="hill-pagination__info">�?${page.currentPage} / ${page.totalPages} �?</span>
+      <button type="button" class="hill-pagination__btn" data-hill-page="${escapeHtml(hill.name)}" data-page-action="next" ${page.currentPage === page.totalPages ? "disabled" : ""}>下一�?</button>
     </div>
   `;
 }
@@ -595,7 +682,7 @@ function getDerivedHills() {
 
   for (const member of state.members) {
     const hillName = member.hill || "默认联盟";
-    const guildName = member.guild || "未命名妖盟";
+    const guildName = member.guild || "δ��������";
     const guildKey = buildGuildKey(member);
     const guildDisplayName = getGuildDisplayName(member);
 
@@ -657,7 +744,7 @@ function renderRanking() {
   state.rankingPage = page.currentPage;
 
   if (!filteredItems.length) {
-    els.rankingList.innerHTML = `<article class="empty-card">暂无排行榜数据。</article>`;
+    els.rankingList.innerHTML = `<article class="empty-card">暂无排行榜数据�?</article>`;
     return;
   }
 
@@ -677,10 +764,10 @@ function renderFeeds() {
   const announcements = state.announcements.filter((item) => item.category === "公告");
   const melonPosts = state.announcements.filter((item) => item.category === "瓜棚");
   if (els.announcementList) {
-    els.announcementList.innerHTML = renderFeedGroup(announcements, "暂无公告内容。");
+    els.announcementList.innerHTML = renderFeedGroup(announcements, "���޹�������");
   }
   if (els.melonList) {
-    els.melonList.innerHTML = renderFeedGroup(melonPosts, "暂无瓜棚内容。");
+    els.melonList.innerHTML = renderFeedGroup(melonPosts, "������Ƥ����");
   }
 }
 
@@ -697,29 +784,35 @@ function renderFeedGroup(items, emptyText) {
 
 function renderAuth() {
   const authenticated = state.me.authenticated;
-  els.logoutBtn?.classList.toggle("hidden", !authenticated);
-  els.loginForm?.classList.toggle("hidden", authenticated);
-  els.guildAdminGate?.classList.toggle("hidden", authenticated);
-  els.guildAdminLayout?.classList.toggle("hidden", !authenticated);
-  els.announcementAdminGate?.classList.toggle("hidden", authenticated);
-  els.announcementAdminLayout?.classList.toggle("hidden", !authenticated);
+  els.loginForm?.classList.toggle('hidden', authenticated);
+  els.guildAdminGate?.classList.toggle('hidden', authenticated);
+  els.guildAdminLayout?.classList.toggle('hidden', !authenticated);
+  els.announcementAdminGate?.classList.toggle('hidden', authenticated);
+  els.announcementAdminLayout?.classList.toggle('hidden', !authenticated);
   if (els.loginState) {
-    els.loginState.textContent = authenticated ? `已登录：${state.me.admin.display_name}` : "未登录";
+    els.loginState.textContent = authenticated ? `????${state.me.admin.display_name}` : "???";
   }
 }
 
 async function handleLogin(event) {
   event.preventDefault();
   try {
-    await request("/api/login", {
+    const data = await request("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({
         username: els.username.value.trim(),
         password: els.password.value.trim(),
       }),
     });
+    // 登录成功，重新获取用户信�?
     await fetchMe();
-    toast("管理员登录成功");
+    // 更新用户信息显示
+    await fetchUser();
+    if (data.is_admin) {
+      toast(`管理�?${data.user.display_name} 登录成功`);
+    } else {
+      toast(`用户 ${data.user.username} 登录成功`);
+    }
   } catch (error) {
     toast(error.message);
   }
@@ -727,11 +820,11 @@ async function handleLogin(event) {
 
 async function handleLogout() {
   try {
-    await request("/api/logout", { method: "POST", body: "{}" });
-    await fetchMe();
-    toast("已退出登录");
+    await window.AUTH?.logout?.();
   } catch (error) {
-    toast(error.message);
+    console.error(error);
+    localStorage.removeItem("alliance_user");
+    window.location.href = "login.html";
   }
 }
 
@@ -747,13 +840,13 @@ async function handleMemberSubmit(event) {
     guild: document.querySelector("#memberGuild").value.trim(),
     name: document.querySelector("#memberName").value.trim(),
     role: "盟主",
-    realm: "待补充",
+    realm: "������",
     power: 0,
     hp: 0,
     attack: 0,
     defense: 0,
     speed: 0,
-    pet: "待补充",
+    pet: "������",
     note: document.querySelector("#memberNote").value.trim(),
   };
 
@@ -782,9 +875,9 @@ function resetMemberForm() {
   document.querySelector("#memberId").value = "";
   document.querySelector("#memberAlliance").value = state.dashboard?.alliance_name || "青云联盟";
   setGuildFormEditMode(false);
-  if (els.memberFormTitle) els.memberFormTitle.textContent = "录入新妖盟";
-  if (els.memberFormHint) els.memberFormHint.textContent = "新增妖盟时填写完整信息；编辑妖盟时只修改妖盟名称和盟主昵称。";
-  if (els.memberSubmitBtn) els.memberSubmitBtn.textContent = "保存妖盟";
+  if (els.memberFormTitle) els.memberFormTitle.textContent = "¼��������";
+  if (els.memberFormHint) els.memberFormHint.textContent = "��������ʱ��д������Ϣ���༭����ʱֻ�޸��������ƺ������ǳơ�";
+  if (els.memberSubmitBtn) els.memberSubmitBtn.textContent = "��������";
 }
 
 async function handleAnnouncementSubmit(event) {
@@ -812,7 +905,7 @@ function resetAnnouncementForm() {
   els.announcementForm?.reset();
   document.querySelector("#announcementId").value = "";
   document.querySelector("#announcementCategory").value = "公告";
-  if (els.announcementFormTitle) els.announcementFormTitle.textContent = "发布动态";
+  if (els.announcementFormTitle) els.announcementFormTitle.textContent = "������̬";
   if (els.announcementSubmitBtn) els.announcementSubmitBtn.textContent = "发布内容";
 }
 
@@ -820,7 +913,7 @@ function renderAdminMembers() {
   if (!els.adminMemberTable) return;
   const guildRows = getAdminGuildRows();
   if (!guildRows.length) {
-    els.adminMemberTable.innerHTML = `<tr><td colspan="5">暂无妖盟数据。</td></tr>`;
+    els.adminMemberTable.innerHTML = `<tr><td colspan="5">暂无妖盟数据�?/td></tr>`;
     return;
   }
   els.adminMemberTable.innerHTML = guildRows.map((guild) => `
@@ -842,7 +935,7 @@ function renderAdminMembers() {
 function renderAdminAnnouncements() {
   if (!els.adminAnnouncementTable) return;
   if (!state.announcements.length) {
-    els.adminAnnouncementTable.innerHTML = `<tr><td colspan="4">暂无动态内容。</td></tr>`;
+    els.adminAnnouncementTable.innerHTML = `<tr><td colspan="4">暂无动态内容�?/td></tr>`;
     return;
   }
   els.adminAnnouncementTable.innerHTML = state.announcements.map((item) => `
@@ -867,11 +960,11 @@ function getAdminGuildRows() {
     if (!guildMap.has(key)) {
       guildMap.set(key, {
         key,
-        alliance: member.alliance || "未命名联盟",
+        alliance: member.alliance || "δ��������",
         code: member.guild_code || "",
         displayName: getGuildDisplayName(member),
-        shortName: member.guild || "未命名妖盟",
-        leaderName: member.name || "待补充",
+        shortName: member.guild || "δ��������",
+        leaderName: member.name || "������",
         power: Number(member.guild_power || 0),
       });
       continue;
@@ -888,7 +981,7 @@ function getAdminGuildRows() {
 async function updateGuildRecord(guildKey, payload) {
   const guildMembers = state.members.filter((item) => buildGuildKey(item) === guildKey);
   if (!guildMembers.length) {
-    throw new Error("没有找到对应的妖盟记录");
+    throw new Error("δ�ҵ���Ӧ�����˼�¼");
   }
 
   await Promise.all(
@@ -1069,7 +1162,7 @@ function handleGuildDetailAction(event) {
       .then(async () => {
         await refreshAll();
         switchView("guildDetail");
-        toast("成员已删除");
+        toast("��Ա��ɾ��");
       })
       .catch((error) => toast(error.message));
   }
@@ -1103,7 +1196,7 @@ function handleAdminMemberAction(event) {
     Promise.all(guildMembers.map((member) => request(`/api/members/${member.id}`, { method: "DELETE" })))
       .then(async () => {
         await refreshAll();
-        toast("妖盟已删除");
+        toast("������ɾ��");
       })
       .catch((error) => toast(error.message));
   }
@@ -1122,7 +1215,7 @@ function handleAdminAnnouncementAction(event) {
     document.querySelector("#announcementCategory").value = item.category;
     document.querySelector("#announcementTitle").value = item.title;
     document.querySelector("#announcementContent").value = item.content;
-    els.announcementFormTitle.textContent = `编辑动态 · ${item.title}`;
+    els.announcementFormTitle.textContent = `编辑动�?· ${item.title}`;
     els.announcementSubmitBtn.textContent = "更新内容";
     state.currentView = "announcementAdmin";
     renderView();
@@ -1133,7 +1226,7 @@ function handleAdminAnnouncementAction(event) {
     request(`/api/announcements/${id}`, { method: "DELETE" })
       .then(async () => {
         await Promise.all([loadDashboard(), fetchAnnouncements()]);
-        toast("内容已删除");
+        toast("������ɾ��");
       })
       .catch((error) => toast(error.message));
   }
@@ -1248,3 +1341,4 @@ function toast(message) {
   document.body.appendChild(banner);
   window.setTimeout(() => banner.remove(), 2200);
 }
+

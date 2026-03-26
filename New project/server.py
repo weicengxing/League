@@ -1,16 +1,22 @@
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import sqlite3
+import smtplib
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+# 导入认证模块
+from auth import AuthHandler, initialize_auth_database, user_sessions, USER_SESSION_COOKIE, USER_SESSION_TTL_SECONDS
 
 BASE_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = BASE_DIR / "public"
@@ -18,10 +24,21 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "alliance.db"
 HOST = "127.0.0.1"
 PORT = 8000
-SESSION_COOKIE = "alliance_session"
+SESSION_COOKIE = "user_session"  # 统一使用与 auth.py 相同的 cookie 名称
 SESSION_TTL_SECONDS = 60 * 60 * 12
 
+# 管理员会话
 sessions = {}
+
+# 邮件配置 - 请根据实际情况修改
+SMTP_CONFIG = {
+    "host": "smtp.qq.com",
+    "port": 587,
+    "use_tls": True,
+    "username": "2629430873@qq.com",  
+    "password": "obvszlnbldobeacd",  
+    "from_name": "寻道大千联盟",
+}
 
 
 def now_text():
@@ -158,6 +175,12 @@ class AllianceHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         cleanup_sessions()
         parsed = urlparse(self.path)
+        
+        # 处理认证 API
+        if parsed.path.startswith("/api/auth/"):
+            self.handle_auth_get(parsed)
+            return
+        
         if parsed.path.startswith("/api/"):
             self.handle_api_get(parsed)
             return
@@ -166,6 +189,12 @@ class AllianceHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         cleanup_sessions()
         parsed = urlparse(self.path)
+        
+        # 处理认证 API
+        if parsed.path.startswith("/api/auth/"):
+            self.handle_auth_post(parsed)
+            return
+        
         if parsed.path.startswith("/api/"):
             self.handle_api_post(parsed)
             return
@@ -223,8 +252,28 @@ class AllianceHandler(BaseHTTPRequestHandler):
             self.send_json({"status": "ok", "time": now_text()})
             return
         if parsed.path == "/api/me":
+            # 优先从 server.py 的 sessions 获取管理员信息
             admin = self.get_current_admin()
-            self.send_json({"authenticated": bool(admin), "admin": admin})
+            if admin:
+                self.send_json({"authenticated": True, "admin": admin})
+                return
+            
+            # 如果 server.py 没有会话，尝试从 auth.py 的 user_sessions 获取
+            from auth import user_sessions
+            token = self.read_session_token()
+            if token and token in user_sessions:
+                session = user_sessions[token]
+                if session.get("is_admin"):
+                    self.send_json({
+                        "authenticated": True, 
+                        "admin": {
+                            "username": session["username"],
+                            "display_name": session.get("display_name", session["username"])
+                        }
+                    })
+                    return
+            
+            self.send_json({"authenticated": False, "admin": None})
             return
         if parsed.path == "/api/dashboard":
             self.send_json(self.build_dashboard())
@@ -442,9 +491,20 @@ class AllianceHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"message": "登录成功", "admin": {"username": row["username"], "display_name": row["display_name"]}}, ensure_ascii=False).encode("utf-8"))
 
     def logout(self):
+        """用户登出 - 同时清理 auth.py 的 sessions"""
         token = self.read_session_token()
+        
+        # 清理 server.py 的 sessions
         if token:
             sessions.pop(token, None)
+        
+        # 同时清理 auth.py 的 user_sessions
+        try:
+            from auth import user_sessions
+            if token and token in user_sessions:
+                user_sessions.pop(token, None)
+        except Exception:
+            pass
 
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -608,6 +668,30 @@ class AllianceHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    # ============ 认证 API 处理方法 ============
+    
+    def handle_auth_get(self, parsed):
+        """处理认证 GET 请求"""
+        # 初始化认证数据库
+        try:
+            initialize_auth_database()
+        except Exception:
+            pass
+        
+        auth_handler = AuthHandler(self)
+        return auth_handler.handle_get(parsed)
+
+    def handle_auth_post(self, parsed):
+        """处理认证 POST 请求"""
+        # 初始化认证数据库
+        try:
+            initialize_auth_database()
+        except Exception:
+            pass
+        
+        auth_handler = AuthHandler(self)
+        return auth_handler.handle_post(parsed)
+    
     def log_message(self, fmt, *args):
         sys.stdout.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), fmt % args))
 
@@ -679,6 +763,10 @@ def build_guild_key(guild_code, guild_prefix, guild_name):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     initialize_database()
     server = ThreadingHTTPServer((HOST, PORT), AllianceHandler)
     print(f"寻道大千联盟信息站已启动: http://{HOST}:{PORT}")

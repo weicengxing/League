@@ -1,0 +1,671 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>找回密码 - 寻道大千联盟信息站</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .auth-container {
+            width: 100%;
+            max-width: 420px;
+            animation: slideUp 0.6s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .auth-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px 35px;
+            box-shadow: 0 25px 80px rgba(0, 0, 0, 0.3);
+        }
+
+        .auth-header {
+            text-align: center;
+            margin-bottom: 35px;
+        }
+
+        .auth-logo {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .auth-header h1 {
+            font-family: 'Noto Serif SC', serif;
+            font-size: 26px;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+        }
+
+        .auth-header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 30px;
+            gap: 20px;
+        }
+
+        .step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .step-number {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            background: #e8e8e8;
+            color: #999;
+            transition: all 0.3s;
+        }
+
+        .step-number.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .step-number.completed {
+            background: #3c3;
+            color: white;
+        }
+
+        .step-label {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .step-label.active {
+            color: #667eea;
+            font-weight: 500;
+        }
+
+        .step-line {
+            width: 40px;
+            height: 2px;
+            background: #e8e8e8;
+            transition: background 0.3s;
+        }
+
+        .step-line.completed {
+            background: #3c3;
+        }
+
+        .form-step {
+            display: none;
+        }
+
+        .form-step.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e8e8e8;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            background: #fff;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-group input::placeholder {
+            color: #aaa;
+        }
+
+        .form-group .input-with-btn {
+            display: flex;
+            gap: 10px;
+        }
+
+        .form-group .input-with-btn input {
+            flex: 1;
+        }
+
+        .btn-send-code {
+            padding: 14px 16px;
+            background: #f0f0f0;
+            border: 2px solid #e8e8e8;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #667eea;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.3s;
+            min-width: 110px;
+        }
+
+        .btn-send-code:hover:not(:disabled) {
+            background: #667eea;
+            border-color: #667eea;
+            color: white;
+        }
+
+        .btn-send-code:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            color: #999;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            width: 100%;
+            padding: 14px;
+            background: #f0f0f0;
+            color: #666;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 12px;
+        }
+
+        .btn-secondary:hover {
+            background: #e8e8e8;
+        }
+
+        .btn-loading {
+            position: relative;
+        }
+
+        .btn-loading::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid transparent;
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 14px 16px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: none;
+            animation: shake 0.5s ease;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-5px); }
+            40%, 80% { transform: translateX(5px); }
+        }
+
+        .alert-error {
+            background: #fee;
+            color: #c33;
+            border: 1px solid #fcc;
+        }
+
+        .alert-success {
+            background: #efe;
+            color: #3c3;
+            border: 1px solid #cfc;
+        }
+
+        .alert-info {
+            background: #eef;
+            color: #667eea;
+            border: 1px solid #ddf;
+        }
+
+        .tip-box {
+            background: #f9f9f9;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .tip-box strong {
+            color: #333;
+        }
+
+        .auth-footer {
+            text-align: center;
+            margin-top: 25px;
+            padding-top: 25px;
+            border-top: 1px solid #eee;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .auth-footer a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .auth-footer a:hover {
+            text-decoration: underline;
+        }
+
+        .back-home {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .back-home a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: color 0.3s;
+        }
+
+        .back-home a:hover {
+            color: white;
+        }
+
+        .success-icon {
+            font-size: 64px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <div class="auth-logo">🔐</div>
+                <h1>找回密码</h1>
+                <p>通过邮箱验证码重置密码</p>
+            </div>
+
+            <div class="step-indicator">
+                <div class="step">
+                    <div class="step-number active" id="step1Num">1</div>
+                    <div class="step-label active" id="step1Label">验证邮箱</div>
+                </div>
+                <div class="step-line" id="stepLine1"></div>
+                <div class="step">
+                    <div class="step-number" id="step2Num">2</div>
+                    <div class="step-label" id="step2Label">重置密码</div>
+                </div>
+            </div>
+
+            <div id="alertError" class="alert alert-error"></div>
+            <div id="alertSuccess" class="alert alert-success"></div>
+            <div id="alertInfo" class="alert alert-info"></div>
+
+            <!-- 步骤1: 输入邮箱 -->
+            <div class="form-step active" id="step1">
+                <div class="tip-box">
+                    <strong>📧 找回密码流程：</strong><br>
+                    1. 输入您注册时使用的邮箱地址<br>
+                    2. 系统会发送6位数字验证码到您的邮箱<br>
+                    3. 输入验证码后设置新密码
+                </div>
+
+                <div class="form-group">
+                    <label for="email">注册邮箱</label>
+                    <input type="email" id="email" name="email" placeholder="请输入注册时填写的邮箱" required autocomplete="email">
+                </div>
+
+                <button type="button" class="btn-primary" id="sendCodeBtn" onclick="sendVerifyCode()">发送验证码</button>
+
+                <div class="auth-footer">
+                    想起密码了？<a href="login.html">立即登录</a>
+                </div>
+            </div>
+
+            <!-- 步骤2: 输入验证码和新密码 -->
+            <div class="form-step" id="step2">
+                <div class="form-group">
+                    <label for="verifyCode">验证码</label>
+                    <div class="input-with-btn">
+                        <input type="text" id="verifyCode" name="verifyCode" placeholder="请输入6位验证码" maxlength="6" required>
+                        <button type="button" class="btn-send-code" id="resendBtn" onclick="sendVerifyCode()">重新发送</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="newPassword">新密码</label>
+                    <input type="password" id="newPassword" name="newPassword" placeholder="至少6位字符" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="confirmPassword">确认新密码</label>
+                    <input type="password" id="confirmPassword" name="confirmPassword" placeholder="再次输入新密码" required>
+                </div>
+
+                <button type="button" class="btn-primary" id="resetBtn" onclick="resetPassword()">重置密码</button>
+
+                <button type="button" class="btn-secondary" onclick="goToStep(1)">← 返回上一步</button>
+            </div>
+
+            <!-- 步骤3: 成功 -->
+            <div class="form-step" id="step3">
+                <div class="success-icon">🎉</div>
+                <h2 class="text-center">密码重置成功！</h2>
+                <p class="text-center" style="color: #666; margin-top: 10px;">您的密码已成功更新</p>
+
+                <button type="button" class="btn-primary" onclick="window.location.href='login.html'" style="margin-top: 30px;">返回登录</button>
+            </div>
+        </div>
+
+        <div class="back-home">
+            <a href="index.html">← 返回首页</a>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/auth';
+        let currentEmail = '';
+        let countdown = 0;
+        let countdownTimer = null;
+
+        // 更新步骤指示器
+        function updateStepIndicator(step) {
+            const step1Num = document.getElementById('step1Num');
+            const step2Num = document.getElementById('step2Num');
+            const step1Label = document.getElementById('step1Label');
+            const step2Label = document.getElementById('step2Label');
+            const stepLine1 = document.getElementById('stepLine1');
+
+            step1Num.classList.remove('active', 'completed');
+            step2Num.classList.remove('active', 'completed');
+            step1Label.classList.remove('active');
+            step2Label.classList.remove('active');
+            stepLine1.classList.remove('completed');
+
+            if (step >= 1) {
+                step1Num.classList.add('completed');
+                step1Label.classList.add('active');
+            }
+            
+            if (step >= 2) {
+                stepLine1.classList.add('completed');
+                step2Num.classList.add('active');
+                step2Label.classList.add('active');
+            }
+        }
+
+        // 切换步骤
+        function goToStep(step) {
+            document.querySelectorAll('.form-step').forEach(el => el.classList.remove('active'));
+            
+            if (step === 1) {
+                document.getElementById('step1').classList.add('active');
+            } else if (step === 2) {
+                document.getElementById('step2').classList.add('active');
+            } else if (step === 3) {
+                document.getElementById('step3').classList.add('active');
+            }
+            
+            updateStepIndicator(step);
+        }
+
+        // 显示提示
+        function showAlert(type, message) {
+            const errorAlert = document.getElementById('alertError');
+            const successAlert = document.getElementById('alertSuccess');
+            const infoAlert = document.getElementById('alertInfo');
+            
+            errorAlert.style.display = 'none';
+            successAlert.style.display = 'none';
+            infoAlert.style.display = 'none';
+            
+            const alertEl = type === 'error' ? errorAlert : type === 'success' ? successAlert : infoAlert;
+            alertEl.textContent = message;
+            alertEl.style.display = 'block';
+        }
+
+        function hideAlerts() {
+            document.getElementById('alertError').style.display = 'none';
+            document.getElementById('alertSuccess').style.display = 'none';
+            document.getElementById('alertInfo').style.display = 'none';
+        }
+
+        // 发送验证码
+        async function sendVerifyCode() {
+            const email = document.getElementById('email').value.trim();
+            
+            if (!email) {
+                showAlert('error', '请输入邮箱地址');
+                return;
+            }
+            
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+                showAlert('error', '请输入有效的邮箱地址');
+                return;
+            }
+            
+            const sendBtn = document.getElementById('sendCodeBtn');
+            const resendBtn = document.getElementById('resendBtn');
+            
+            sendBtn.disabled = true;
+            resendBtn.disabled = true;
+            
+            try {
+                const response = await fetch(`${API_BASE}/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ email })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentEmail = email;
+                    showAlert('success', `验证码已发送到 ${data.email}，请查收`);
+                    goToStep(2);
+                    startCountdown();
+                } else {
+                    showAlert('error', data.error || '发送验证码失败');
+                    sendBtn.disabled = false;
+                    resendBtn.disabled = false;
+                }
+            } catch (error) {
+                showAlert('error', '网络错误，请检查服务器是否运行');
+                sendBtn.disabled = false;
+                resendBtn.disabled = false;
+            }
+        }
+
+        // 倒计时
+        function startCountdown() {
+            countdown = 60;
+            const resendBtn = document.getElementById('resendBtn');
+            
+            countdownTimer = setInterval(() => {
+                countdown--;
+                if (countdown > 0) {
+                    resendBtn.textContent = `${countdown}秒后重发`;
+                    resendBtn.disabled = true;
+                } else {
+                    clearInterval(countdownTimer);
+                    resendBtn.textContent = '重新发送';
+                    resendBtn.disabled = false;
+                }
+            }, 1000);
+        }
+
+        // 重置密码
+        async function resetPassword() {
+            const verifyCode = document.getElementById('verifyCode').value.trim();
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            
+            if (!verifyCode) {
+                showAlert('error', '请输入验证码');
+                return;
+            }
+            
+            if (verifyCode.length !== 6) {
+                showAlert('error', '验证码为6位数字');
+                return;
+            }
+            
+            if (!newPassword) {
+                showAlert('error', '请输入新密码');
+                return;
+            }
+            
+            if (newPassword.length < 6) {
+                showAlert('error', '密码长度不能少于6位');
+                return;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                showAlert('error', '两次输入的密码不一致');
+                return;
+            }
+            
+            const resetBtn = document.getElementById('resetBtn');
+            resetBtn.disabled = true;
+            resetBtn.classList.add('btn-loading');
+            resetBtn.textContent = '重置中...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/reset`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        email: currentEmail,
+                        verifyCode,
+                        newPassword,
+                        confirmPassword
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    clearInterval(countdownTimer);
+                    goToStep(3);
+                } else {
+                    showAlert('error', data.error || '重置密码失败');
+                    resetBtn.disabled = false;
+                    resetBtn.classList.remove('btn-loading');
+                    resetBtn.textContent = '重置密码';
+                }
+            } catch (error) {
+                showAlert('error', '网络错误，请检查服务器是否运行');
+                resetBtn.disabled = false;
+                resetBtn.classList.remove('btn-loading');
+                resetBtn.textContent = '重置密码';
+            }
+        }
+    document.addEventListener('DOMContentLoaded', () => {
+            goToStep(1);
+            hideAlerts();
+        });
+    </script>
+</body>
+</html>
+
