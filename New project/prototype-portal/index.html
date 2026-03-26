@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>寻道大千联盟信息站</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <div class="brand">
+        <p class="eyebrow">XUNDAO DQ · ALLIANCE PORTAL</p>
+        <h1>寻道大千联盟信息站</h1>
+        <p class="hero-desc">参考联盟门户的内容结构，整合联盟排行、妖盟资料、公告动态、信息提交与管理入口，方便盟内统一查看与维护。</p>
+      </div>
+      <div class="header-side">
+        <div class="header-badge">
+          <span>当前联盟</span>
+          <strong id="allianceName">青云联盟</strong>
+          <small id="memberCount">0 名成员</small>
+        </div>
+      </div>
+    </header>
+
+    <nav class="top-nav">
+      <a href="#home">主页</a>
+      <a href="#ranking">排行榜</a>
+      <a href="#guilds">妖盟大全</a>
+      <a href="#announcements">联盟公告</a>
+      <a href="#submit">提交妖盟</a>
+      <a href="#update">更新妖盟</a>
+      <a href="#melon">联盟瓜棚</a>
+      <a href="#admin">管理登录</a>
+    </nav>
+
+    <main class="portal-grid">
+      <section class="panel hero-panel" id="home">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">主页</p>
+            <h2>联盟总览</h2>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <article class="stat-card">
+            <span>联盟总战力</span>
+            <strong id="totalPower">0</strong>
+          </article>
+          <article class="stat-card">
+            <span>妖盟总数</span>
+            <strong id="guildCount">0</strong>
+          </article>
+          <article class="stat-card">
+            <span>最高战力成员</span>
+            <strong id="topMember">暂无</strong>
+          </article>
+          <article class="stat-card">
+            <span>最强妖盟</span>
+            <strong id="topGuild">暂无</strong>
+          </article>
+        </div>
+        <div class="quick-grid">
+          <article class="quick-card">
+            <h3>本站功能</h3>
+            <p>支持维护每个妖盟的成员战力、属性、公告和动态，并可用本地浏览器保存数据。</p>
+          </article>
+          <article class="quick-card">
+            <h3>使用方式</h3>
+            <p>录入信息后自动保存在当前浏览器。后续如需做毕设成品，我们还能继续接数据库和后台。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" id="ranking">
+        <div class="panel-head panel-head--wrap">
+          <div>
+            <p class="panel-eyebrow">排行榜</p>
+            <h2>联盟战力榜</h2>
+          </div>
+          <div class="toolbar">
+            <select id="rankingGuildFilter">
+              <option value="all">全部妖盟</option>
+            </select>
+            <select id="sortSelect">
+              <option value="power-desc">战力从高到低</option>
+              <option value="power-asc">战力从低到高</option>
+              <option value="name-asc">按昵称排序</option>
+            </select>
+          </div>
+        </div>
+        <div class="ranking-list" id="rankingList"></div>
+      </section>
+
+      <section class="panel" id="guilds">
+        <div class="panel-head panel-head--wrap">
+          <div>
+            <p class="panel-eyebrow">妖盟大全</p>
+            <h2>妖盟信息库</h2>
+          </div>
+          <div class="toolbar">
+            <input type="search" id="searchInput" placeholder="搜索妖盟、成员、境界、灵兽">
+            <select id="guildFilter">
+              <option value="all">全部妖盟</option>
+            </select>
+            <button type="button" class="ghost-btn" id="exportBtn">导出数据</button>
+            <label class="ghost-btn ghost-btn--file">
+              导入数据
+              <input type="file" id="importInput" accept=".json">
+            </label>
+          </div>
+        </div>
+        <div id="guildSummary" class="guild-summary"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>联盟</th>
+                <th>妖盟</th>
+                <th>昵称</th>
+                <th>职位</th>
+                <th>境界</th>
+                <th>战力</th>
+                <th>气血</th>
+                <th>攻击</th>
+                <th>防御</th>
+                <th>敏捷</th>
+                <th>灵兽</th>
+                <th>备注</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="memberTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" id="announcements">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">联盟公告</p>
+            <h2>最新通知</h2>
+          </div>
+        </div>
+        <div class="feed-list" id="announcementList"></div>
+      </section>
+
+      <section class="panel split-panel" id="submit">
+        <div>
+          <div class="panel-head">
+            <div>
+              <p class="panel-eyebrow">提交妖盟</p>
+              <h2 id="formTitle">新增成员信息</h2>
+            </div>
+            <button type="button" class="ghost-btn" id="resetFormBtn">清空表单</button>
+          </div>
+          <form id="memberForm" class="member-form">
+            <input type="hidden" id="memberId" name="memberId">
+            <label>
+              联盟名称
+              <input id="alliance" name="alliance" type="text" placeholder="如：青云联盟" required>
+            </label>
+            <label>
+              所属妖盟
+              <input id="guild" name="guild" type="text" placeholder="如：天狐妖盟" required>
+            </label>
+            <label>
+              成员昵称
+              <input id="name" name="name" type="text" placeholder="如：青玄子" required>
+            </label>
+            <label>
+              职位
+              <select id="role" name="role" required>
+                <option value="盟主">盟主</option>
+                <option value="副盟主">副盟主</option>
+                <option value="长老">长老</option>
+                <option value="核心">核心</option>
+                <option value="成员">成员</option>
+              </select>
+            </label>
+            <label>
+              境界
+              <input id="realm" name="realm" type="text" placeholder="如：化神后期" required>
+            </label>
+            <label>
+              战力
+              <input id="power" name="power" type="number" min="0" step="1" required>
+            </label>
+            <label>
+              气血
+              <input id="hp" name="hp" type="number" min="0" step="1" required>
+            </label>
+            <label>
+              攻击
+              <input id="attack" name="attack" type="number" min="0" step="1" required>
+            </label>
+            <label>
+              防御
+              <input id="defense" name="defense" type="number" min="0" step="1" required>
+            </label>
+            <label>
+              敏捷
+              <input id="speed" name="speed" type="number" min="0" step="1" required>
+            </label>
+            <label>
+              灵兽
+              <input id="pet" name="pet" type="text" placeholder="如：应龙" required>
+            </label>
+            <label>
+              备注
+              <textarea id="note" name="note" rows="4" placeholder="记录法宝、流派、配队、特殊说明"></textarea>
+            </label>
+            <button type="submit" class="primary-btn" id="submitBtn">保存成员信息</button>
+          </form>
+        </div>
+
+        <div id="update">
+          <div class="panel-head">
+            <div>
+              <p class="panel-eyebrow">更新妖盟</p>
+              <h2>快捷更新说明</h2>
+            </div>
+          </div>
+          <div class="notice-card">
+            <p>1. 先在“妖盟大全”里找到目标成员。</p>
+            <p>2. 点击“编辑”后，页面会自动回到提交区并回填数据。</p>
+            <p>3. 修改后再次保存，即可完成更新。</p>
+            <p>4. 如果只是更换妖盟，也可以直接修改“所属妖盟”字段。</p>
+          </div>
+          <div class="notice-card">
+            <h3>推荐后续扩展</h3>
+            <p>后面可以继续加：</p>
+            <p>登录权限、成员审核、操作日志、排行榜图表、后端数据库。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="melon">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">联盟瓜棚</p>
+            <h2>盟内动态</h2>
+          </div>
+        </div>
+        <div class="feed-list" id="melonList"></div>
+      </section>
+
+      <section class="panel admin-panel" id="admin">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">管理员登录</p>
+            <h2>后台入口原型</h2>
+          </div>
+        </div>
+        <form class="admin-form">
+          <label>
+            管理员账号
+            <input type="text" value="admin" readonly>
+          </label>
+          <label>
+            管理密码
+            <input type="password" value="123456" readonly>
+          </label>
+          <button type="button" class="primary-btn" id="adminLoginBtn">模拟登录</button>
+        </form>
+        <p class="admin-tip" id="adminTip">当前是静态原型站，这里先做展示入口，后续可以接真实登录系统。</p>
+      </section>
+    </main>
+  </div>
+
+  <template id="rankingItemTemplate">
+    <article class="ranking-item">
+      <span class="ranking-item__index"></span>
+      <div>
+        <strong class="ranking-item__name"></strong>
+        <p class="ranking-item__meta"></p>
+      </div>
+      <strong class="ranking-item__power"></strong>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
