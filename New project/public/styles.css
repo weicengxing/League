@@ -743,6 +743,44 @@ button {
   gap: 14px;
 }
 
+.melon-post-form {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 18px;
+  border-radius: 18px;
+  background: rgba(255, 252, 246, 0.96);
+  border: 1px solid rgba(145, 163, 128, 0.14);
+}
+
+.melon-post-form input,
+.melon-post-form textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(137, 155, 120, 0.2);
+  border-radius: 12px;
+  background: #fffdf8;
+  color: var(--text);
+}
+
+.melon-post-form textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.melon-post-form .primary-btn {
+  justify-self: end;
+  min-width: 120px;
+}
+
+.melon-post-form:disabled {
+  opacity: 0.6;
+}
+
+.melon-post-form:disabled .primary-btn {
+  cursor: not-allowed;
+}
+
 .ranking-item,
 .feed-item,
 .empty-card,
@@ -777,6 +815,7 @@ button {
 .ranking-item__meta,
 .feed-item p,
 .feed-item small,
+.melon-revoke-btn,
 .login-state,
 .admin-gate p {
   color: var(--muted);
@@ -1543,4 +1582,23 @@ td {
 
 .profile-media__actions {
   margin-top: 14px;
+}
+
+/* 瓜棚撤回按钮 */
+.melon-revoke-btn {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: #fff1f1;
+  color: #be5252;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.melon-revoke-btn:hover {
+  background: #ffe0e0;
 }

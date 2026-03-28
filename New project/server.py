@@ -1,4 +1,5 @@
 import hashlib
+import base64
 import hmac
 import json
 import mimetypes
@@ -6,7 +7,10 @@ import secrets
 import sqlite3
 import traceback
 import sys
+import struct
+import threading
 from cgi import FieldStorage
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -30,6 +34,14 @@ SESSION_COOKIE = "alliance_session"
 SESSION_TTL_SECONDS = 60 * 60 * 12
 
 sessions = {}
+
+# WebSocket clients connected for real-time melon updates
+ws_clients = set()
+ws_clients_lock = threading.Lock()
+WS_MAGIC_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+# Thread pool for async database writes
+db_executor = ThreadPoolExecutor(max_workers=2)
 
 
 def now_text():
@@ -181,7 +193,8 @@ def initialize_database():
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
                 category TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                author TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS guild_registry (
@@ -250,6 +263,10 @@ def initialize_database():
         if "screenshot_path" not in columns:
             connection.execute("ALTER TABLE members ADD COLUMN screenshot_path TEXT NOT NULL DEFAULT ''")
 
+        announcement_columns = [row["name"] for row in connection.execute("PRAGMA table_info(announcements)").fetchall()]
+        if "author" not in announcement_columns:
+            connection.execute("ALTER TABLE announcements ADD COLUMN author TEXT NOT NULL DEFAULT ''")
+
         connection.execute("CREATE INDEX IF NOT EXISTS idx_guild_registry_code_lookup ON guild_registry(guild_code)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_members_guild_name_lookup ON members(guild_code, guild_prefix, guild, name)")
 
@@ -262,7 +279,7 @@ def initialize_database():
                 ("玄龟妖盟准备换阵", "据说正在测试双反击流，有望下周冲进前二。", "瓜棚"),
             ]
             connection.executemany(
-                "INSERT INTO announcements (title, content, category, created_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
                 [(title, content, category, now_text()) for title, content, category in seed_announcements],
             )
 
@@ -330,6 +347,9 @@ class AllianceHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/auth/"):
             AuthHandler(self).handle()
+            return
+        if parsed.path == "/ws/melon":
+            self.handle_melon_websocket_upgrade()
             return
         if parsed.path.startswith("/api/"):
             self.handle_api_get(parsed)
@@ -436,6 +456,31 @@ class AllianceHandler(BaseHTTPRequestHandler):
             return
         self.send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
 
+    def handle_melon_websocket_upgrade(self):
+        upgrade_header = (self.headers.get("Upgrade") or "").lower()
+        connection_header = (self.headers.get("Connection") or "").lower()
+        key = self.headers.get("Sec-WebSocket-Key")
+        version = self.headers.get("Sec-WebSocket-Version")
+        if upgrade_header != "websocket" or "upgrade" not in connection_header or not key or version != "13":
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid WebSocket handshake")
+            return
+
+        accept_value = base64.b64encode(
+            hashlib.sha1((key + WS_MAGIC_GUID).encode("utf-8")).digest()
+        ).decode("ascii")
+        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept_value)
+        self.end_headers()
+
+        client = MelonWebSocketClient(self.connection, self.client_address)
+        register_ws_client(client)
+        try:
+            client.read_loop()
+        finally:
+            unregister_ws_client(client)
+
     def handle_api_post(self, parsed):
         if parsed.path == "/api/guilds":
             admin = self.require_admin()
@@ -482,6 +527,15 @@ class AllianceHandler(BaseHTTPRequestHandler):
             if not admin:
                 return
             self.import_members_from_excel()
+            return
+        if parsed.path == "/api/melon":
+            # 瓜棚发布接口：所有登录用户都可以发布
+            user = self.get_current_user_or_admin()
+            if not user:
+                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            payload = self.read_json()
+            self.create_melon_post(user, payload)
             return
         self.send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
 
@@ -553,6 +607,15 @@ class AllianceHandler(BaseHTTPRequestHandler):
                 return
             announcement_id = parsed.path.rsplit("/", 1)[-1]
             self.delete_by_id("announcements", announcement_id)
+            return
+        if parsed.path.startswith("/api/melon/"):
+            # 瓜棚撤回接口：发布者可在2分钟内撤回
+            user = self.get_current_user_or_admin()
+            if not user:
+                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            melon_id = parsed.path.rsplit("/", 1)[-1]
+            self.delete_melon_post(user, melon_id)
             return
         self.send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
 
@@ -636,7 +699,14 @@ class AllianceHandler(BaseHTTPRequestHandler):
 
         ranking = [serialize_member(member) for member in sorted(members, key=lambda item: item["power"], reverse=True)[:10]]
         public_announcements = [
-            {"id": row["id"], "title": row["title"], "content": row["content"], "category": row["category"], "created_at": row["created_at"]}
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "content": row["content"],
+                "category": row["category"],
+                "created_at": row["created_at"],
+                "author": row["author"],
+            }
             for row in announcements
         ]
 
@@ -696,6 +766,7 @@ class AllianceHandler(BaseHTTPRequestHandler):
                     "content": row["content"],
                     "category": row["category"],
                     "created_at": row["created_at"],
+                    "author": row["author"],
                 }
                 for row in rows
             ]
@@ -987,8 +1058,8 @@ class AllianceHandler(BaseHTTPRequestHandler):
         timestamp = now_text()
         with open_db() as connection:
             cursor = connection.execute(
-                "INSERT INTO announcements (title, content, category, created_at) VALUES (?, ?, ?, ?)",
-                (title, content, category, timestamp),
+                "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
+                (title, content, category, timestamp, ""),
             )
             connection.commit()
 
@@ -996,6 +1067,86 @@ class AllianceHandler(BaseHTTPRequestHandler):
             {"message": "内容发布成功", "item": {"id": cursor.lastrowid, "title": title, "content": content, "category": category, "created_at": timestamp}},
             status=HTTPStatus.CREATED,
         )
+    def create_melon_post(self, user, payload):
+        """Create a melon post - called from /api/melon endpoint."""
+        title = str(payload.get("title", "")).strip()
+        content = str(payload.get("content", "")).strip()
+        if not title or not content:
+            self.send_json({"error": "标题和内容不能为空"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        # Get author name from user object
+        author_name = user.get("username") or user.get("display_name") or "匿名用户"
+        user_id = user.get("id") or user.get("admin_id")
+
+        # Create melon post
+        melon_item = create_melon_post(title, content, author_name, user_id)
+
+        self.send_json(
+            {"message": "瓜棚发布成功", "item": melon_item},
+            status=HTTPStatus.CREATED,
+        )
+
+        try:
+            broadcast_melon_post(melon_item)
+        except Exception:
+            pass
+
+    def delete_melon_post(self, user, melon_id):
+        """Delete a melon post - called from /api/melon/<id> endpoint."""
+        if not melon_id.isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        user_id = user.get("id") or user.get("admin_id")
+        username = user.get("username") or user.get("display_name") or ""
+
+        with open_db() as connection:
+            # Get the melon post
+            row = connection.execute(
+                "SELECT id, title, author, created_at FROM announcements WHERE id = ? AND category = '瓜棚'",
+                (melon_id,),
+            ).fetchone()
+
+            if not row:
+                self.send_json({"error": "瓜棚动态不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+
+            # Check if the user is the author (compare by username/display_name)
+            author = row["author"] or ""
+            if author != username:
+                self.send_json({"error": "只有发布者才能撤回"}, status=HTTPStatus.FORBIDDEN)
+                return
+
+            # Check if within 2 minutes
+            created_at = row["created_at"]
+            try:
+                created_time = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+                elapsed = (datetime.now() - created_time).total_seconds()
+                if elapsed > 120:  # 2 minutes = 120 seconds
+                    self.send_json({"error": "已超过2分钟，无法撤回"}, status=HTTPStatus.FORBIDDEN)
+                    return
+            except (ValueError, TypeError):
+                self.send_json({"error": "时间解析错误"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            # Delete the melon post
+            cursor = connection.execute(
+                "DELETE FROM announcements WHERE id = ?",
+                (melon_id,),
+            )
+            connection.commit()
+
+        if cursor.rowcount == 0:
+            self.send_json({"error": "删除失败"}, status=HTTPStatus.NOT_FOUND)
+            return
+
+        try:
+            broadcast_melon_deleted(int(melon_id))
+        except Exception:
+            pass
+
+        self.send_json({"message": "撤回成功", "deleted_id": int(melon_id)})
 
     def update_announcement(self, announcement_id, payload):
         title = str(payload.get("title", "")).strip()
@@ -1456,6 +1607,13 @@ class AllianceHandler(BaseHTTPRequestHandler):
             return None
         return current["user"]
 
+    def get_current_user_or_admin(self):
+        """Get current user whether admin or normal user."""
+        current = get_current_auth(self)
+        if not current.get("authenticated"):
+            return None
+        return current["user"]
+
     def read_session_token(self):
         cookie_header = self.headers.get("Cookie")
         if not cookie_header:
@@ -1563,6 +1721,181 @@ def serialize_member(member):
     }
 
 
+# ==================== WebSocket Support for Melon Posts ====================
+
+
+def register_ws_client(client):
+    with ws_clients_lock:
+        ws_clients.add(client)
+
+
+def unregister_ws_client(client):
+    with ws_clients_lock:
+        ws_clients.discard(client)
+
+
+def snapshot_ws_clients():
+    with ws_clients_lock:
+        return list(ws_clients)
+
+
+def broadcast_melon_post(melon_item):
+    """Broadcast a new melon post to all connected WebSocket clients."""
+    _broadcast_ws_text({
+        "type": "melon_new",
+        "id": melon_item.get("id"),
+        "title": melon_item.get("title", ""),
+    })
+
+
+def broadcast_melon_deleted(deleted_id):
+    """Broadcast a deleted melon post to all connected WebSocket clients."""
+    _broadcast_ws_text({"type": "melon_deleted", "deleted_id": deleted_id})
+
+
+def _broadcast_ws_text(payload):
+    message = json.dumps(payload, ensure_ascii=False)
+    dead_clients = []
+    for client in snapshot_ws_clients():
+        try:
+            client.send_text(message)
+        except Exception:
+            dead_clients.append(client)
+    for client in dead_clients:
+        unregister_ws_client(client)
+
+
+class MelonWebSocketClient:
+    def __init__(self, connection, client_address):
+        self.connection = connection
+        self.client_address = client_address
+        self.closed = False
+        self.send_lock = threading.Lock()
+
+    def _recv_exact(self, size):
+        buffer = bytearray()
+        while len(buffer) < size:
+            chunk = self.connection.recv(size - len(buffer))
+            if not chunk:
+                raise ConnectionError("WebSocket connection closed")
+            buffer.extend(chunk)
+        return bytes(buffer)
+
+    def _build_frame(self, payload_bytes, opcode=0x1):
+        first_byte = 0x80 | (opcode & 0x0F)
+        length = len(payload_bytes)
+        if length < 126:
+            header = struct.pack("!BB", first_byte, length)
+        elif length < 65536:
+            header = struct.pack("!BBH", first_byte, 126, length)
+        else:
+            header = struct.pack("!BBQ", first_byte, 127, length)
+        return header + payload_bytes
+
+    def send_text(self, text):
+        if self.closed:
+            return
+        frame = self._build_frame(text.encode("utf-8"), opcode=0x1)
+        with self.send_lock:
+            self.connection.sendall(frame)
+
+    def send_pong(self, payload=b""):
+        if self.closed:
+            return
+        frame = self._build_frame(payload, opcode=0xA)
+        with self.send_lock:
+            self.connection.sendall(frame)
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            with self.send_lock:
+                self.connection.sendall(self._build_frame(b"", opcode=0x8))
+        except Exception:
+            pass
+        try:
+            self.connection.close()
+        except Exception:
+            pass
+
+    def read_loop(self):
+        try:
+            while not self.closed:
+                header = self._recv_exact(2)
+                first_byte, second_byte = header[0], header[1]
+                opcode = first_byte & 0x0F
+                masked = bool(second_byte & 0x80)
+                payload_length = second_byte & 0x7F
+
+                if payload_length == 126:
+                    payload_length = struct.unpack("!H", self._recv_exact(2))[0]
+                elif payload_length == 127:
+                    payload_length = struct.unpack("!Q", self._recv_exact(8))[0]
+
+                mask_key = self._recv_exact(4) if masked else b""
+                payload = self._recv_exact(payload_length) if payload_length else b""
+                if masked and payload:
+                    payload = bytes(byte ^ mask_key[i % 4] for i, byte in enumerate(payload))
+
+                if opcode == 0x8:
+                    break
+                if opcode == 0x9:
+                    self.send_pong(payload)
+        except Exception:
+            pass
+        finally:
+            self.close()
+
+
+def async_save_melon_to_db(title, content, author_name):
+    """Save melon post to database asynchronously (runs in thread pool)."""
+    def _save():
+        timestamp = now_text()
+        with open_db() as connection:
+            cursor = connection.execute(
+                "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
+                (title, content, "\u74dc\u68da", timestamp, author_name),
+            )
+            connection.commit()
+            return {
+                "id": cursor.lastrowid,
+                "title": title,
+                "content": content,
+                "category": "瓜棚",
+                "created_at": timestamp,
+                "author": author_name,
+            }
+    future = db_executor.submit(_save)
+    # We don't wait here - the caller gets the future if needed
+    # But for optimistic updates, we'll return a temporary item immediately
+    return future
+
+
+def create_melon_post(title, content, author_name, user_id=None):
+    """Create a melon post immediately (synchronous for API response)."""
+    timestamp = now_text()
+    with open_db() as connection:
+        cursor = connection.execute(
+            "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
+            (title, content, "\u74dc\u68da", timestamp, author_name),
+        )
+        connection.commit()
+        melon_item = {
+            "id": cursor.lastrowid,
+            "title": title,
+            "content": content,
+            "category": "瓜棚",
+            "created_at": timestamp,
+            "author": author_name,
+            "author_id": user_id,
+        }
+    return melon_item
+
+
+# ==================== Main ====================
+
 def main():
     initialize_database()
     initialize_auth_database()
@@ -1578,4 +1911,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\n服务器已停止")
-

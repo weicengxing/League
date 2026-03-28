@@ -1,3 +1,101 @@
+// WebSocket connection for real-time melon updates
+let melonWs = null;
+let melonReconnectAttempts = 0;
+const MELON_WS_MAX_RECONNECT = 5;
+
+function connectMelonWebSocket() {
+  if (melonWs && melonWs.readyState === WebSocket.OPEN) {
+    return;
+  }
+  
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/ws/melon`;
+  
+  try {
+    melonWs = new WebSocket(wsUrl);
+    
+    melonWs.onopen = () => {
+      console.log('[Melon WS] Connected');
+      melonReconnectAttempts = 0;
+    };
+    
+    melonWs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'melon_new') {
+          handleMelonNewEvent(data);
+        }
+        if (data.type === 'melon_deleted' && data.deleted_id) {
+          handleMelonDeleted(data.deleted_id);
+        }
+      } catch (e) {
+        console.error('[Melon WS] Parse error:', e);
+      }
+    };
+    
+    melonWs.onclose = () => {
+      console.log('[Melon WS] Disconnected');
+      melonWs = null;
+      // Auto reconnect with backoff
+      if (melonReconnectAttempts < MELON_WS_MAX_RECONNECT) {
+        const delay = Math.min(1000 * Math.pow(2, melonReconnectAttempts), 30000);
+        melonReconnectAttempts++;
+        setTimeout(connectMelonWebSocket, delay);
+      }
+    };
+    
+    melonWs.onerror = (error) => {
+      console.error('[Melon WS] Error:', error);
+    };
+    
+  } catch (e) {
+    console.error('[Melon WS] Failed to connect:', e);
+  }
+}
+
+function handleNewMelonPost(item) {
+  // Add to local announcements state (optimistic)
+  if (!state.announcements.find(a => a.id === item.id)) {
+    state.announcements.unshift(item);
+  }
+  // Re-render melon list
+  renderFeeds();
+  renderAdminAnnouncements();
+  // Show notification (only for real items, not temp ones)
+  if (!String(item.id).startsWith('temp_')) {
+    toast(`新瓜棚动态: ${item.title}`);
+  }
+}
+
+async function handleMelonNewEvent(eventData) {
+  const melonId = String(eventData?.id || "");
+  const alreadyPresent = melonId ? state.announcements.some((item) => String(item.id) === melonId) : false;
+  await fetchAnnouncements();
+  if (!alreadyPresent) {
+    toast(eventData?.title ? `新瓜棚动态: ${eventData.title}` : "有新的瓜棚动态");
+  }
+}
+
+function handleMelonDeleted(deletedId) {
+  // Remove from local announcements state
+  const index = state.announcements.findIndex(a => String(a.id) === String(deletedId));
+  if (index !== -1) {
+    state.announcements.splice(index, 1);
+  }
+  // Re-render melon list
+  renderFeeds();
+  renderAdminAnnouncements();
+  // Show notification
+  toast("瓜棚动态已撤回");
+}
+
+function disconnectMelonWebSocket() {
+  if (melonWs) {
+    melonWs.close();
+    melonWs = null;
+  }
+}
+
 const state = {
   dashboard: null,
   members: [],
@@ -382,6 +480,23 @@ function bindEvents() {
   document.addEventListener("click", handleModalDismiss);
   document.addEventListener("keydown", handleModalKeydown);
   
+  // 瓜棚发布表单
+  const melonPostForm = document.querySelector("#melonPostForm");
+  if (melonPostForm) {
+    melonPostForm.addEventListener("submit", handleMelonPostSubmit);
+  }
+  
+  // 瓜棚撤回按钮
+  document.addEventListener("click", (event) => {
+    const revokeBtn = event.target.closest("[data-melon-revoke]");
+    if (revokeBtn instanceof HTMLElement) {
+      const melonId = revokeBtn.dataset.melonRevoke;
+      if (melonId) {
+        handleMelonRevoke(melonId);
+      }
+    }
+  });
+  
   // 创建隐藏的文件输入框用于Excel导入
   const excelInput = document.createElement("input");
   excelInput.type = "file";
@@ -395,11 +510,120 @@ function bindEvents() {
 async function boot() {
   try {
     await refreshAll();
+    connectMelonWebSocket();
   } catch (error) {
     console.error(error);
     toast(`页面初始化失败：${error.message}`);
   }
   renderView();
+}
+
+async function handleMelonPostSubmit(event) {
+  event.preventDefault();
+  const titleInput = document.querySelector("#melonTitle");
+  const contentInput = document.querySelector("#melonContent");
+  const form = document.querySelector("#melonPostForm");
+  
+  const title = titleInput?.value.trim();
+  const content = contentInput?.value.trim();
+  
+  if (!title || !content) {
+    toast("标题和内容不能为空");
+    return;
+  }
+  
+  if (!state.me.authenticated) {
+    toast("请先登录后再发布");
+    return;
+  }
+  
+  // Optimistic update - add to list immediately
+  const tempId = `temp_${Date.now()}`;
+  const tempItem = {
+    id: tempId,
+    title: title,
+    content: content,
+    category: "瓜棚",
+    created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
+    author: state.me.user?.username || state.me.user?.display_name || "匿名用户",
+  };
+  
+  // Add optimistic item
+  state.announcements.unshift(tempItem);
+  renderFeeds();
+  
+  // Clear form
+  form?.reset();
+  
+  try {
+    const result = await request("/api/melon", {
+      method: "POST",
+      body: JSON.stringify({ title, content }),
+    });
+    
+    // Replace the optimistic item and dedupe against any WebSocket echo
+    if (result.item) {
+      const realId = String(result.item.id);
+      const existingRealIndex = state.announcements.findIndex((a) => String(a.id) === realId);
+      const tempIndex = state.announcements.findIndex((a) => a.id === tempId);
+
+      if (existingRealIndex !== -1 && tempIndex !== -1 && existingRealIndex !== tempIndex) {
+        state.announcements.splice(tempIndex, 1);
+      } else if (tempIndex !== -1) {
+        state.announcements[tempIndex] = result.item;
+      } else if (existingRealIndex === -1) {
+        state.announcements.unshift(result.item);
+      }
+    }
+    renderFeeds();
+    renderAdminAnnouncements();
+    
+    toast("瓜棚发布成功");
+  } catch (error) {
+    // Remove optimistic item on error
+    const index = state.announcements.findIndex(a => a.id === tempId);
+    if (index !== -1) {
+      state.announcements.splice(index, 1);
+    }
+    renderFeeds();
+    toast(error.message);
+  }
+}
+
+async function handleMelonRevoke(melonId) {
+  // Skip temp items
+  if (String(melonId).startsWith('temp_')) {
+    toast("无法撤回");
+    return;
+  }
+  
+  if (!state.me.authenticated) {
+    toast("请先登录");
+    return;
+  }
+  
+  const index = state.announcements.findIndex((item) => String(item.id) === String(melonId));
+  const removedItem = index !== -1 ? state.announcements[index] : null;
+  if (index !== -1) {
+    state.announcements.splice(index, 1);
+    renderFeeds();
+    renderAdminAnnouncements();
+  }
+
+  try {
+    await request(`/api/melon/${melonId}`, {
+      method: "DELETE",
+      body: JSON.stringify({}),
+    });
+    toast("撤回成功");
+  } catch (error) {
+    if (removedItem) {
+      state.announcements.splice(index, 0, removedItem);
+      renderFeeds();
+      renderAdminAnnouncements();
+    }
+    toast(error.message);
+  }
 }
 
 async function refreshAll() {
@@ -455,6 +679,8 @@ async function fetchAnnouncements() {
 async function fetchMe() {
   state.me = await request("/api/auth/me");
   renderAuth();
+  renderFeeds();
+  renderAdminAnnouncements();
 }
 
 function renderDashboard() {
@@ -971,13 +1197,29 @@ function renderFeeds() {
 
 function renderFeedGroup(items, emptyText) {
   if (!items.length) return `<article class="empty-card">${emptyText}</article>`;
-  return items.map((item) => `
-    <article class="feed-item">
-      <strong>${escapeHtml(item.title)}</strong>
-      <p>${escapeHtml(item.content)}</p>
-      <small>${escapeHtml(item.created_at || "")}</small>
-    </article>
-  `).join("");
+  return items.map((item) => {
+    // 计算是否在2分钟内可撤回
+    let canRevoke = false;
+    if (item.created_at && state.me.authenticated) {
+      const createdTime = new Date(item.created_at.replace(' ', 'T'));
+      const now = new Date();
+      const elapsed = (now - createdTime) / 1000; // 秒
+      canRevoke = elapsed <= 120; // 2分钟 = 120秒
+      // 检查是否是发布者本人
+      const currentUsername = state.me.user?.username || state.me.user?.display_name || "";
+      if (item.author !== currentUsername) {
+        canRevoke = false;
+      }
+    }
+    return `
+      <article class="feed-item" data-melon-id="${item.id}">
+        <strong>${escapeHtml(item.title)}</strong>
+        <p>${escapeHtml(item.content)}</p>
+        <small>${escapeHtml(item.created_at || "")}${item.author ? ' · ' + escapeHtml(item.author) : ''}</small>
+        ${canRevoke ? `<button type="button" class="melon-revoke-btn" data-melon-revoke="${item.id}">撤回</button>` : ''}
+      </article>
+    `;
+  }).join("");
 }
 
 function renderAuth() {
