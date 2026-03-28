@@ -34,6 +34,8 @@ SMTP_CONFIG = {
     "from_name": "寻道大千联盟",
 }
 
+# 注册验证码存储: {email_lower: {"code": "...", "expire": datetime, "sent_at": timestamp}}
+register_verify_codes = {}
 user_sessions = {}
 
 
@@ -230,7 +232,9 @@ class AuthHandler:
 
     def handle_post(self, parsed):
         """处理 POST 请求"""
-        if parsed.path == "/api/auth/register":
+        if parsed.path == "/api/auth/register-verify":
+            return self.send_register_verify_code()
+        elif parsed.path == "/api/auth/register":
             return self.register()
         elif parsed.path == "/api/auth/login":
             return self.login()
@@ -261,9 +265,26 @@ class AuthHandler:
         if len(username) < 3 or len(username) > 20:
             return self.send_json({"error": "用户名长度应在 3-20 个字符之间"}, HTTPStatus.BAD_REQUEST)
         
-        if not email.endswith("@qq.com") and not email.endswith("@163.com") and not email.endswith("@gmail.com"):
-            return self.send_json({"error": "请输入有效的邮箱地址"}, HTTPStatus.BAD_REQUEST)
-        
+        if not email.endswith("@qq.com") and not email.endswith("@outlook.com") and not email.endswith("@gmail.com"):
+            return self.send_json({"error": "仅支持 @qq.com、@outlook.com、@gmail.com 邮箱注册"}, HTTPStatus.BAD_REQUEST)
+
+        # 验证邮箱验证码
+        verify_code = str(payload.get("verifyCode", "")).strip()
+        if not verify_code:
+            return self.send_json({"error": "请输入邮箱验证码"}, HTTPStatus.BAD_REQUEST)
+
+        email_lower = email.lower()
+        stored = register_verify_codes.get(email_lower)
+        if not stored:
+            return self.send_json({"error": "请先发送邮箱验证码"}, HTTPStatus.BAD_REQUEST)
+
+        if stored["code"] != verify_code:
+            return self.send_json({"error": "验证码错误"}, HTTPStatus.UNAUTHORIZED)
+
+        if datetime.now() > stored["expire"]:
+            register_verify_codes.pop(email_lower, None)
+            return self.send_json({"error": "验证码已过期，请重新获取"}, HTTPStatus.UNAUTHORIZED)
+
         if len(password) < 6:
             return self.send_json({"error": "密码长度不能少于 6 位"}, HTTPStatus.BAD_REQUEST)
         
@@ -278,6 +299,9 @@ class AuthHandler:
             
             if existing_user:
                 return self.send_json({"error": "用户名或邮箱已被注册"}, HTTPStatus.CONFLICT)
+
+            # 注册成功，清除验证码
+            register_verify_codes.pop(email_lower, None)
 
             # 创建新用户
             salt = secrets.token_hex(16)
@@ -294,6 +318,86 @@ class AuthHandler:
             connection.commit()
 
         return self.send_json({"message": "注册成功", "username": username}, HTTPStatus.CREATED)
+
+    def send_register_verify_code(self):
+        """发送注册验证码到邮箱"""
+        payload = self.read_json()
+        email = str(payload.get("email", "")).strip()
+
+        if not email:
+            return self.send_json({"error": "邮箱地址不能为空"}, HTTPStatus.BAD_REQUEST)
+
+        if not email.endswith("@qq.com") and not email.endswith("@outlook.com") and not email.endswith("@gmail.com"):
+            return self.send_json({"error": "仅支持 @qq.com、@outlook.com、@gmail.com 邮箱注册"}, HTTPStatus.BAD_REQUEST)
+
+        email_lower = email.lower()
+
+        # 频率限制：60秒内不能重复发送
+        stored = register_verify_codes.get(email_lower)
+        current_ts = datetime.now().timestamp()
+        if stored and current_ts - stored["sent_at"] < 60:
+            remaining = int(60 - (current_ts - stored["sent_at"]))
+            return self.send_json({"error": f"请 {remaining} 秒后再试"}, HTTPStatus.TOO_MANY_REQUESTS)
+
+        # 检查邮箱是否已注册
+        with open_db() as connection:
+            existing = connection.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+            if existing:
+                return self.send_json({"error": "该邮箱已被注册"}, HTTPStatus.CONFLICT)
+
+        # 生成验证码
+        verify_code = generate_verify_code(6)
+        expire_time = datetime.now() + timedelta(minutes=15)
+
+        register_verify_codes[email_lower] = {
+            "code": verify_code,
+            "expire": expire_time,
+            "sent_at": current_ts,
+        }
+
+        # 发送邮件
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: 'Microsoft YaHei', Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }}
+                .container {{ max-width: 500px; margin: 0 auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                .header {{ background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%); color: white; padding: 30px; text-align: center; }}
+                .header h1 {{ margin: 0; font-size: 24px; }}
+                .content {{ padding: 30px; text-align: center; }}
+                .code {{ font-size: 36px; font-weight: bold; color: #56ab2f; letter-spacing: 8px; margin: 20px 0; }}
+                .tip {{ color: #666; font-size: 14px; line-height: 1.6; }}
+                .footer {{ background: #f9f9f9; padding: 15px; text-align: center; color: #999; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🌿 注册验证码</h1>
+                </div>
+                <div class="content">
+                    <p>您好，欢迎注册寻道大千联盟</p>
+                    <p class="code">{verify_code}</p>
+                    <p class="tip">验证码 15 分钟内有效，请勿泄露给他人</p>
+                    <p class="tip">如果不是您本人操作，请忽略此邮件</p>
+                </div>
+                <div class="footer">
+                    寻道大千联盟信息站 · 请勿回复此邮件
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        success = send_email(email, "【寻道大千】注册验证码", html_content)
+
+        if success:
+            return self.send_json({"message": "验证码已发送到邮箱", "email": mask_email(email)})
+        else:
+            register_verify_codes.pop(email_lower, None)
+            return self.send_json({"error": "发送验证码失败，请检查邮箱地址或稍后重试"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def login(self):
         """用户登录 - 同时支持管理员和普通用户"""

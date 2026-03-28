@@ -428,9 +428,16 @@
                   <input id="registerUsername" name="username" type="text" placeholder="3-20 位用户名" required>
                 </label>
                 <label>常用灵邮
-                  <input id="registerEmail" name="email" type="email" placeholder="输入常用邮箱" required>
+                  <input id="registerEmail" name="email" type="email" placeholder="仅支持 qq/outlook/gmail" required>
+                  <small style="color: var(--gold); font-size: 12px; margin-top: 4px;">仅支持 @qq.com / @outlook.com / @gmail.com</small>
                 </label>
               </div>
+              <label>邮箱验证码
+                <div style="display: flex; gap: 10px;">
+                  <input id="registerVerifyCode" name="verifyCode" type="text" placeholder="输入6位验证码" maxlength="6" inputmode="numeric" required style="flex: 1;">
+                  <button type="button" id="sendVerifyCodeBtn" class="submit-btn" style="white-space: nowrap; padding: 16px 18px; min-width: 120px; font-size: 15px;">发送验证码</button>
+                </div>
+              </label>
               <div class="grid-two">
                 <label>设置秘钥
                   <input id="registerPassword" name="password" type="password" placeholder="至少 6 位密码" required>
@@ -512,21 +519,86 @@
       }
     });
 
+    // 发送注册验证码
+    const sendVerifyCodeBtn = document.querySelector("#sendVerifyCodeBtn");
+    let verifyCodeTimer = null;
+
+    function isEmailAllowed(email) {
+      return email.endsWith("@qq.com") || email.endsWith("@outlook.com") || email.endsWith("@gmail.com");
+    }
+
+    sendVerifyCodeBtn.addEventListener("click", async () => {
+      const email = document.querySelector("#registerEmail").value.trim();
+      if (!email) {
+        showAlert("error", "请先填写邮箱地址");
+        return;
+      }
+      if (!isEmailAllowed(email)) {
+        showAlert("error", "仅支持 @qq.com / @outlook.com / @gmail.com 邮箱");
+        return;
+      }
+      hideAlert();
+      sendVerifyCodeBtn.disabled = true;
+      try {
+        const result = await request("/api/auth/register-verify", {
+          method: "POST",
+          body: JSON.stringify({ email }),
+        });
+        showAlert("success", result.message || "验证码已发送");
+        // 60秒倒计时
+        let countdown = 60;
+        sendVerifyCodeBtn.textContent = `${countdown}s 后重发`;
+        verifyCodeTimer = setInterval(() => {
+          countdown--;
+          if (countdown <= 0) {
+            clearInterval(verifyCodeTimer);
+            sendVerifyCodeBtn.disabled = false;
+            sendVerifyCodeBtn.textContent = "发送验证码";
+          } else {
+            sendVerifyCodeBtn.textContent = `${countdown}s 后重发`;
+          }
+        }, 1000);
+      } catch (error) {
+        showAlert("error", error.message);
+        sendVerifyCodeBtn.disabled = false;
+      }
+    });
+
     registerForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       hideAlert();
+      const email = document.querySelector("#registerEmail").value.trim();
+      const verifyCode = document.querySelector("#registerVerifyCode").value.trim();
+      if (!email) {
+        showAlert("error", "请填写邮箱地址");
+        return;
+      }
+      if (!isEmailAllowed(email)) {
+        showAlert("error", "仅支持 @qq.com / @outlook.com / @gmail.com 邮箱");
+        return;
+      }
+      if (!verifyCode) {
+        showAlert("error", "请输入邮箱验证码");
+        return;
+      }
       try {
         const result = await request("/api/auth/register", {
           method: "POST",
           body: JSON.stringify({
             username: document.querySelector("#registerUsername").value.trim(),
-            email: document.querySelector("#registerEmail").value.trim(),
+            email: email,
+            verifyCode: verifyCode,
             password: document.querySelector("#registerPassword").value.trim(),
             confirmPassword: document.querySelector("#registerConfirmPassword").value.trim(),
           }),
         });
         showAlert("success", `${result.message || "注册成功"}，请使用新账号登录`);
         registerForm.reset();
+        if (verifyCodeTimer) {
+          clearInterval(verifyCodeTimer);
+          sendVerifyCodeBtn.disabled = false;
+          sendVerifyCodeBtn.textContent = "发送验证码";
+        }
         switchTab("login");
         document.querySelector("#loginUsername").value = result.username || "";
       } catch (error) {
