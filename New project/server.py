@@ -14,6 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+import openpyxl
+
 from auth import AuthHandler, get_current_auth, initialize_auth_database
 
 
@@ -474,6 +476,12 @@ class AllianceHandler(BaseHTTPRequestHandler):
                 return
             member_id = parsed.path.strip("/").split("/")[2]
             self.upload_member_screenshot(member_id)
+            return
+        if parsed.path == "/api/members/import":
+            admin = self.require_admin()
+            if not admin:
+                return
+            self.import_members_from_excel()
             return
         self.send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
 
@@ -1122,6 +1130,197 @@ class AllianceHandler(BaseHTTPRequestHandler):
                 },
             }
         )
+
+    def import_members_from_excel(self):
+        """从Excel文件导入成员数据"""
+        form = FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+            },
+        )
+        
+        # 获取Excel文件
+        file_item = form["file"] if "file" in form else None
+        if file_item is None or getattr(file_item, "file", None) is None:
+            self.send_json({"error": "请先选择Excel文件"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        
+        # 获取目标妖盟信息
+        guild_code = str(form.getvalue("guild_code", "")).strip()
+        guild_prefix = str(form.getvalue("guild_prefix", "")).strip()
+        guild_name = str(form.getvalue("guild", "")).strip()
+        
+        if not guild_name:
+            self.send_json({"error": "缺少妖盟信息"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        
+        # 读取文件内容
+        raw = file_item.file.read()
+        if not raw:
+            self.send_json({"error": "Excel文件不能为空"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        
+        # 保存临时文件
+        import tempfile
+        import os
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = tmp.name
+        
+        try:
+            # 解析Excel
+            wb = openpyxl.load_workbook(tmp_path)
+            ws = wb.active
+            
+            # 获取表头行（第一行）
+            headers = []
+            for cell in ws[1]:
+                headers.append(str(cell.value).strip() if cell.value else "")
+            
+            # 找到各列的索引（列顺序不固定）
+            col_indices = {}
+            for i, header in enumerate(headers):
+                header_lower = header.lower()
+                if header_lower in ["名称", "昵称", "name"]:
+                    col_indices["name"] = i
+                elif header_lower in ["境界", "realm"]:
+                    col_indices["realm"] = i
+                elif header_lower in ["等级", "level", "lv", "role"]:
+                    col_indices["role"] = i
+                elif header_lower in ["敏捷", "speed"]:
+                    col_indices["speed"] = i
+                elif header_lower in ["战力", "power"]:
+                    col_indices["power"] = i
+                elif header_lower in ["灵兽", "宠物", "pet"]:
+                    col_indices["pet"] = i
+                elif header_lower in ["增伤", "bonus_damage", "bonus"]:
+                    col_indices["bonus_damage"] = i
+                elif header_lower in ["减伤", "damage_reduction", "reduction"]:
+                    col_indices["damage_reduction"] = i
+            
+            if "name" not in col_indices:
+                self.send_json({"error": "Excel中未找到成员名称列（名称/昵称）"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            
+            # 解析数据行
+            rows_data = []
+            for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                name = str(row[col_indices["name"]]).strip() if col_indices["name"] < len(row) and row[col_indices["name"]] else ""
+                if not name:
+                    continue
+                
+                row_data = {
+                    "name": name,
+                    "realm": str(row[col_indices["realm"]]).strip() if "realm" in col_indices and col_indices["realm"] < len(row) and row[col_indices["realm"]] else "待补充",
+                    "role": str(row[col_indices["role"]]).strip() if "role" in col_indices and col_indices["role"] < len(row) and row[col_indices["role"]] else "成员",
+                    "speed": row[col_indices["speed"]] if "speed" in col_indices and col_indices["speed"] < len(row) else 0,
+                    "power": row[col_indices["power"]] if "power" in col_indices and col_indices["power"] < len(row) else 0,
+                    "pet": str(row[col_indices["pet"]]).strip() if "pet" in col_indices and col_indices["pet"] < len(row) and row[col_indices["pet"]] else "待补充",
+                    "bonus_damage": row[col_indices["bonus_damage"]] if "bonus_damage" in col_indices and col_indices["bonus_damage"] < len(row) else 0,
+                    "damage_reduction": row[col_indices["damage_reduction"]] if "damage_reduction" in col_indices and col_indices["damage_reduction"] < len(row) else 0,
+                }
+                rows_data.append(row_data)
+            
+            if not rows_data:
+                self.send_json({"error": "Excel中没有找到有效数据"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            
+            # Excel内部去重（按名称）
+            seen_names = set()
+            unique_rows = []
+            for row_data in rows_data:
+                if row_data["name"] not in seen_names:
+                    seen_names.add(row_data["name"])
+                    unique_rows.append(row_data)
+            
+            excel_duplicates = len(rows_data) - len(unique_rows)
+            
+            # 获取数据库中该妖盟已有的成员名称
+            with open_db() as connection:
+                existing_members = connection.execute(
+                    "SELECT name FROM members WHERE guild_code = ? AND guild_prefix = ? AND guild = ?",
+                    (guild_code, guild_prefix, guild_name)
+                ).fetchall()
+                existing_names = set(row["name"] for row in existing_members)
+                
+                # 检查妖盟是否存在
+                guild = connection.execute(
+                    "SELECT * FROM guild_registry WHERE guild_code = ? AND guild_prefix = ? AND guild = ?",
+                    (guild_code, guild_prefix, guild_name)
+                ).fetchone()
+                
+                if not guild:
+                    self.send_json({"error": f"妖盟 '{guild_name}' 不存在，请先创建妖盟"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                
+                alliance = guild["alliance"]
+                hill = guild["hill"]
+                
+                # 过滤掉已存在的成员
+                new_members = [row for row in unique_rows if row["name"] not in existing_names]
+                db_duplicates = len(unique_rows) - len(new_members)
+                
+                if not new_members:
+                    self.send_json({
+                        "message": "所有成员均已存在，无需导入",
+                        "imported": 0,
+                        "skipped_excel_duplicates": excel_duplicates,
+                        "skipped_existing": db_duplicates,
+                        "total_rows": len(rows_data)
+                    })
+                    return
+                
+                # 插入新成员
+                timestamp = now_text()
+                imported_count = 0
+                for row_data in new_members:
+                    try:
+                        power = parse_scaled_number(row_data["power"], "战力")
+                        speed = parse_scaled_number(row_data["speed"], "敏捷")
+                        bonus_damage = parse_scaled_number(row_data["bonus_damage"], "增伤")
+                        damage_reduction = parse_scaled_number(row_data["damage_reduction"], "减伤")
+                    except (TypeError, ValueError):
+                        power = 0
+                        speed = 0
+                        bonus_damage = 0
+                        damage_reduction = 0
+                    
+                    connection.execute(
+                        """
+                        INSERT INTO members (
+                            alliance, hill, guild_code, guild_prefix, guild_power, guild, name, role, realm, power, hp, attack, defense, speed, bonus_damage, damage_reduction, pet, note, screenshot_path, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            alliance, hill, guild_code, guild_prefix, 0, guild_name,
+                            row_data["name"], row_data["role"], row_data["realm"], power,
+                            0, 0, 0, speed, bonus_damage, damage_reduction,
+                            row_data["pet"], "", "", timestamp, timestamp
+                        )
+                    )
+                    imported_count += 1
+                
+                connection.commit()
+            
+            self.send_json({
+                "message": f"成功导入 {imported_count} 名成员",
+                "imported": imported_count,
+                "skipped_excel_duplicates": excel_duplicates,
+                "skipped_existing": db_duplicates,
+                "total_rows": len(rows_data)
+            })
+            
+        except Exception as exc:
+            self.send_json({"error": f"解析Excel文件失败: {str(exc)}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+        finally:
+            # 删除临时文件
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
 
     def get_current_user_profile(self):
         current = get_current_auth(self)

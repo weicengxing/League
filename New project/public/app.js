@@ -381,6 +381,15 @@ function bindEvents() {
   els.memberScreenshotInput?.addEventListener("change", handleMemberScreenshotSelected);
   document.addEventListener("click", handleModalDismiss);
   document.addEventListener("keydown", handleModalKeydown);
+  
+  // 创建隐藏的文件输入框用于Excel导入
+  const excelInput = document.createElement("input");
+  excelInput.type = "file";
+  excelInput.accept = ".xlsx,.xls";
+  excelInput.style.display = "none";
+  excelInput.id = "excelImportInput";
+  document.body.appendChild(excelInput);
+  excelInput.addEventListener("change", handleExcelFileSelected);
 }
 
 async function boot() {
@@ -638,7 +647,8 @@ function renderGuildDetail() {
   renderGuildDetailFilters(detail.members);
   if (els.guildDetailActions) {
     els.guildDetailActions.innerHTML = state.me.is_admin
-      ? `<button type="button" class="primary-btn" data-action="add-member">新增成员</button>`
+      ? `<button type="button" class="primary-btn" data-action="import-excel">导入Excel</button>
+         <button type="button" class="ghost-btn" data-action="add-member">新增成员</button>`
       : `<button type="button" class="ghost-btn" data-action="go-login">登录后管理成员</button>`;
   }
   const filteredMembers = getFilteredGuildMembers(detail.members);
@@ -1325,6 +1335,62 @@ function triggerMemberScreenshotUpload(memberId) {
   els.memberScreenshotInput.click();
 }
 
+function triggerExcelImport() {
+  const excelInput = document.querySelector("#excelImportInput");
+  if (excelInput) {
+    excelInput.value = "";
+    excelInput.click();
+  }
+}
+
+async function handleExcelFileSelected(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  // 获取当前妖盟的信息
+  const guildKey = state.selectedGuild;
+  if (!guildKey) {
+    toast("未选择妖盟");
+    input.value = "";
+    return;
+  }
+
+  // 解析guildKey获取妖盟信息
+  const parts = guildKey.split("|");
+  const guild_code = parts[0] || "";
+  const guild_prefix = parts[1] || "";
+  const guild_name = parts[2] || "";
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("guild_code", guild_code);
+  formData.append("guild_prefix", guild_prefix);
+  formData.append("guild", guild_name);
+
+  try {
+    const result = await request("/api/members/import", {
+      method: "POST",
+      body: formData,
+    });
+    await refreshAll();
+    switchView("guildDetail");
+    
+    let message = result.message;
+    if (result.skipped_excel_duplicates > 0) {
+      message += `（Excel内去重 ${result.skipped_excel_duplicates} 人）`;
+    }
+    if (result.skipped_existing > 0) {
+      message += `（已有成员跳过 ${result.skipped_existing} 人）`;
+    }
+    toast(message);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    input.value = "";
+  }
+}
+
 async function handleMemberScreenshotSelected(event) {
   const input = event.target;
   const memberId = state.pendingScreenshotMemberId;
@@ -1562,6 +1628,9 @@ function handleGuildDetailToolbarAction(event) {
   }
   if (target.dataset.action === "add-member" && state.me.is_admin && state.selectedGuild) {
     openMemberEditModal(null, state.selectedGuild);
+  }
+  if (target.dataset.action === "import-excel" && state.me.is_admin && state.selectedGuild) {
+    triggerExcelImport();
   }
 }
 
