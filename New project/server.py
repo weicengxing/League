@@ -1,48 +1,76 @@
 import hashlib
 import hmac
 import json
-import logging
+import mimetypes
 import secrets
 import sqlite3
-import smtplib
+import traceback
 import sys
-from datetime import datetime, timedelta
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from cgi import FieldStorage
+from datetime import datetime
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-# 导入认证模块
-from auth import AuthHandler, initialize_auth_database, user_sessions, USER_SESSION_COOKIE, USER_SESSION_TTL_SECONDS
+from auth import AuthHandler, get_current_auth, initialize_auth_database
+
 
 BASE_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = BASE_DIR / "public"
 DATA_DIR = BASE_DIR / "data"
+UPLOADS_DIR = PUBLIC_DIR / "uploads" / "member-screenshots"
 DB_PATH = DATA_DIR / "alliance.db"
 HOST = "127.0.0.1"
 PORT = 8000
-SESSION_COOKIE = "user_session"  # 统一使用与 auth.py 相同的 cookie 名称
+SESSION_COOKIE = "alliance_session"
 SESSION_TTL_SECONDS = 60 * 60 * 12
 
-# 管理员会话
 sessions = {}
-
-# 邮件配置 - 请根据实际情况修改
-SMTP_CONFIG = {
-    "host": "smtp.qq.com",
-    "port": 587,
-    "use_tls": True,
-    "username": "2629430873@qq.com",  
-    "password": "obvszlnbldobeacd",  
-    "from_name": "寻道大千联盟",
-}
 
 
 def now_text():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def parse_scaled_number(value, field_name="数值"):
+    raw = str(value or "").strip()
+    if not raw:
+        return 0
+
+    normalized = raw.replace(",", "").replace("％", "%").replace(" ", "")
+    if normalized.endswith("%"):
+        normalized = normalized[:-1]
+
+    composite_multiplier = None
+    for composite_suffix, multiplier_value in (("万亿", 1_000_000_000_000), ("萬億", 1_000_000_000_000)):
+        if normalized.endswith(composite_suffix):
+            composite_multiplier = multiplier_value
+            normalized = normalized[:-len(composite_suffix)]
+            break
+
+    units = {
+        "k": 1_000,
+        "K": 1_000,
+        "千": 1_000,
+        "w": 10_000,
+        "W": 10_000,
+        "万": 10_000,
+        "亿": 100_000_000,
+    }
+
+    multiplier = composite_multiplier or 1
+    if composite_multiplier is None:
+        suffix = normalized[-1:] if normalized else ""
+        if suffix in units:
+            multiplier = units[suffix]
+            normalized = normalized[:-1]
+
+    try:
+        return round(float(normalized or "0") * multiplier, 4)
+    except ValueError as exc:
+        raise ValueError(f"{field_name}格式不正确，支持小数，也支持万、亿、万亿等单位") from exc
 
 
 def hash_password(password: str, salt: str) -> str:
@@ -56,8 +84,84 @@ def open_db():
     return connection
 
 
+def build_guild_display_name(guild_code, guild_prefix, guild_name):
+    parts = [str(guild_code or "").strip(), str(guild_prefix or "").strip(), str(guild_name or "").strip()]
+    return " ".join(part for part in parts if part)
+
+
+def build_guild_key(guild_code, guild_prefix, guild_name):
+    return "|".join([
+        str(guild_code or "").strip(),
+        str(guild_prefix or "").strip(),
+        str(guild_name or "").strip(),
+    ])
+
+
+def upsert_guild_registry(connection, member, leader_name=None):
+    guild_key = build_guild_key(member.get("guild_code", ""), member.get("guild_prefix", ""), member.get("guild", ""))
+    if not guild_key:
+        return
+    connection.execute(
+        """
+        INSERT INTO guild_registry (
+            guild_key, alliance, hill, guild_code, guild_prefix, guild, guild_power, leader_name, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_key) DO UPDATE SET
+            alliance = excluded.alliance,
+            hill = excluded.hill,
+            guild_code = excluded.guild_code,
+            guild_prefix = excluded.guild_prefix,
+            guild = excluded.guild,
+            guild_power = excluded.guild_power,
+            leader_name = excluded.leader_name,
+            updated_at = excluded.updated_at
+        """,
+        (
+            guild_key,
+            member.get("alliance", "🔮联盟"),
+            member.get("hill", "默认山头"),
+            member.get("guild_code", ""),
+            member.get("guild_prefix", ""),
+            member.get("guild", ""),
+            int(member.get("guild_power", 0) or 0),
+            leader_name if leader_name is not None else member.get("name", ""),
+            member.get("updated_at") or member.get("created_at") or now_text(),
+        ),
+    )
+
+
+def guild_exists(connection, guild_code, guild_prefix, guild_name, exclude_key=None):
+    conditions = []
+    params = []
+    if str(guild_code or "").strip():
+        conditions.append("guild_code = ?")
+        params.append(str(guild_code).strip())
+    else:
+        conditions.append("guild_prefix = ? AND guild = ?")
+        params.extend([str(guild_prefix or "").strip(), str(guild_name or "").strip()])
+    if exclude_key:
+        conditions.append("guild_key <> ?")
+        params.append(exclude_key)
+    query = f"SELECT guild_key FROM guild_registry WHERE {' AND '.join(conditions)} LIMIT 1"
+    return connection.execute(query, tuple(params)).fetchone()
+
+
+def member_name_exists(connection, guild_code, guild_prefix, guild_name, member_name, exclude_id=None):
+    query = """
+        SELECT id FROM members
+        WHERE guild_code = ? AND guild_prefix = ? AND guild = ? AND name = ?
+    """
+    params = [str(guild_code or "").strip(), str(guild_prefix or "").strip(), str(guild_name or "").strip(), str(member_name or "").strip()]
+    if exclude_id is not None:
+        query += " AND id <> ?"
+        params.append(exclude_id)
+    query += " LIMIT 1"
+    return connection.execute(query, tuple(params)).fetchone()
+
+
 def initialize_database():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     with open_db() as connection:
         connection.executescript(
             """
@@ -76,6 +180,18 @@ def initialize_database():
                 content TEXT NOT NULL,
                 category TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS guild_registry (
+                guild_key TEXT PRIMARY KEY,
+                alliance TEXT NOT NULL,
+                hill TEXT NOT NULL DEFAULT '默认山头',
+                guild_code TEXT NOT NULL DEFAULT '',
+                guild_prefix TEXT NOT NULL DEFAULT '',
+                guild TEXT NOT NULL,
+                guild_power INTEGER NOT NULL DEFAULT 0,
+                leader_name TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS members (
@@ -98,6 +214,7 @@ def initialize_database():
                 damage_reduction INTEGER NOT NULL DEFAULT 0,
                 pet TEXT NOT NULL,
                 note TEXT NOT NULL DEFAULT '',
+                screenshot_path TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -128,6 +245,11 @@ def initialize_database():
             connection.execute("ALTER TABLE members ADD COLUMN bonus_damage INTEGER NOT NULL DEFAULT 0")
         if "damage_reduction" not in columns:
             connection.execute("ALTER TABLE members ADD COLUMN damage_reduction INTEGER NOT NULL DEFAULT 0")
+        if "screenshot_path" not in columns:
+            connection.execute("ALTER TABLE members ADD COLUMN screenshot_path TEXT NOT NULL DEFAULT ''")
+
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_guild_registry_code_lookup ON guild_registry(guild_code)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_members_guild_name_lookup ON members(guild_code, guild_prefix, guild, name)")
 
         announcement_count = connection.execute("SELECT COUNT(*) AS count FROM announcements").fetchone()["count"]
         if announcement_count == 0:
@@ -146,9 +268,9 @@ def initialize_database():
         if member_count == 0:
             timestamp = now_text()
             seed_members = [
-                ("青云联盟", "蓬莱1-方丈12", "833", "长虹山", 865200, "天狐妖盟", "青玄子", "盟主", "化神后期", 328000, 98000, 23500, 16800, 9200, "应龙", "主修暴击流，负责联盟指挥。", timestamp, timestamp),
-                ("青云联盟", "方丈13-瀛洲4", "612", "望月山", 612800, "玄龟妖盟", "白芷", "副盟主", "元婴圆满", 285600, 86200, 21000, 15200, 10100, "九尾狐", "负责资源统计与招新审核。", timestamp, timestamp),
-                ("青云联盟", "蓬莱1-方丈12", "501", "赤羽山", 501300, "赤羽妖盟", "曜尘", "长老", "元婴后期", 243500, 79800, 18700, 14500, 8800, "玄龟", "主抗伤阵容，联盟战前排。", timestamp, timestamp),
+                ("🔮联盟", "蓬莱1-方丈12", "833", "长虹山", 865200, "天狐妖盟", "青玄子", "盟主", "化神后期", 328000, 98000, 23500, 16800, 9200, "应龙", "主修暴击流，负责联盟指挥。", timestamp, timestamp),
+                ("🔮联盟", "方丈13-瀛洲4", "612", "望月山", 612800, "玄龟妖盟", "白芷", "副盟主", "元婴圆满", 285600, 86200, 21000, 15200, 10100, "九尾狐", "负责资源统计与招新审核。", timestamp, timestamp),
+                ("🔮联盟", "蓬莱1-方丈12", "501", "赤羽山", 501300, "赤羽妖盟", "曜尘", "长老", "元婴后期", 243500, 79800, 18700, 14500, 8800, "玄龟", "主抗伤阵容，联盟战前排。", timestamp, timestamp),
             ]
             connection.executemany(
                 """
@@ -158,6 +280,23 @@ def initialize_database():
                 """,
                 seed_members,
             )
+
+        registry_count = connection.execute("SELECT COUNT(*) AS count FROM guild_registry").fetchone()["count"]
+        if registry_count == 0:
+            rows = [dict(row) for row in connection.execute("SELECT * FROM members ORDER BY updated_at DESC, id DESC").fetchall()]
+            grouped = {}
+            for row in rows:
+                key = build_guild_key(row.get("guild_code", ""), row.get("guild_prefix", ""), row.get("guild", ""))
+                if not key:
+                    continue
+                entry = grouped.setdefault(key, {**row})
+                entry["guild_power"] = max(int(entry.get("guild_power", 0) or 0), int(row.get("guild_power", 0) or 0))
+                if row.get("role") == "盟主" and row.get("name"):
+                    entry["name"] = row["name"]
+            for entry in grouped.values():
+                upsert_guild_registry(connection, entry)
+
+        connection.execute("UPDATE members SET alliance = '🔮联盟' WHERE alliance = '青云联盟'")
 
         connection.commit()
 
@@ -173,34 +312,40 @@ class AllianceHandler(BaseHTTPRequestHandler):
     server_version = "AlliancePortal/1.0"
 
     def do_GET(self):
+        self.run_safely(self._do_GET_impl)
+
+    def do_POST(self):
+        self.run_safely(self._do_POST_impl)
+
+    def do_PUT(self):
+        self.run_safely(self._do_PUT_impl)
+
+    def do_DELETE(self):
+        self.run_safely(self._do_DELETE_impl)
+
+    def _do_GET_impl(self):
         cleanup_sessions()
         parsed = urlparse(self.path)
-        
-        # 处理认证 API
         if parsed.path.startswith("/api/auth/"):
-            self.handle_auth_get(parsed)
+            AuthHandler(self).handle()
             return
-        
         if parsed.path.startswith("/api/"):
             self.handle_api_get(parsed)
             return
         self.serve_static(parsed.path)
 
-    def do_POST(self):
+    def _do_POST_impl(self):
         cleanup_sessions()
         parsed = urlparse(self.path)
-        
-        # 处理认证 API
         if parsed.path.startswith("/api/auth/"):
-            self.handle_auth_post(parsed)
+            AuthHandler(self).handle()
             return
-        
         if parsed.path.startswith("/api/"):
             self.handle_api_post(parsed)
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
-    def do_PUT(self):
+    def _do_PUT_impl(self):
         cleanup_sessions()
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/"):
@@ -208,7 +353,7 @@ class AllianceHandler(BaseHTTPRequestHandler):
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
-    def do_DELETE(self):
+    def _do_DELETE_impl(self):
         cleanup_sessions()
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/"):
@@ -216,10 +361,24 @@ class AllianceHandler(BaseHTTPRequestHandler):
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
+    def run_safely(self, handler):
+        try:
+            handler()
+        except BrokenPipeError:
+            raise
+        except Exception as exc:
+            sys.stderr.write(f"[server-error] {self.command} {self.path}: {exc}\n")
+            traceback.print_exc()
+            if getattr(self, "wfile", None) and not self.wfile.closed:
+                try:
+                    self.send_json({"error": f"服务器内部错误: {exc}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                except Exception:
+                    pass
+
     def serve_static(self, path: str):
         target = PUBLIC_DIR / path.lstrip("/")
         if path in ("", "/"):
-            target = PUBLIC_DIR / "index.html"
+            target = PUBLIC_DIR / "auth.html"
 
         if target.is_dir():
             target = target / "index.html"
@@ -241,6 +400,8 @@ class AllianceHandler(BaseHTTPRequestHandler):
             content_type = "application/javascript; charset=utf-8"
         elif resolved.suffix == ".json":
             content_type = "application/json; charset=utf-8"
+        elif resolved.suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
 
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
@@ -252,31 +413,13 @@ class AllianceHandler(BaseHTTPRequestHandler):
             self.send_json({"status": "ok", "time": now_text()})
             return
         if parsed.path == "/api/me":
-            # 优先从 server.py 的 sessions 获取管理员信息
-            admin = self.get_current_admin()
-            if admin:
-                self.send_json({"authenticated": True, "admin": admin})
-                return
-            
-            # 如果 server.py 没有会话，尝试从 auth.py 的 user_sessions 获取
-            from auth import user_sessions
-            token = self.read_session_token()
-            if token and token in user_sessions:
-                session = user_sessions[token]
-                if session.get("is_admin"):
-                    self.send_json({
-                        "authenticated": True, 
-                        "admin": {
-                            "username": session["username"],
-                            "display_name": session.get("display_name", session["username"])
-                        }
-                    })
-                    return
-            
-            self.send_json({"authenticated": False, "admin": None})
+            self.send_json(get_current_auth(self))
             return
         if parsed.path == "/api/dashboard":
             self.send_json(self.build_dashboard())
+            return
+        if parsed.path == "/api/profile/me":
+            self.send_json(self.get_current_user_profile())
             return
         if parsed.path == "/api/members":
             query = parse_qs(parsed.query)
@@ -285,15 +428,19 @@ class AllianceHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/announcements":
             self.send_json(self.list_announcements())
             return
+        if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
+            member_id = parsed.path.strip("/").split("/")[2]
+            self.send_json(self.get_member_screenshot(member_id))
+            return
         self.send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
 
     def handle_api_post(self, parsed):
-        if parsed.path == "/api/login":
+        if parsed.path == "/api/guilds":
+            admin = self.require_admin()
+            if not admin:
+                return
             payload = self.read_json()
-            self.login(payload)
-            return
-        if parsed.path == "/api/logout":
-            self.logout()
+            self.create_guild(payload)
             return
         if parsed.path == "/api/members":
             admin = self.require_admin()
@@ -302,6 +449,18 @@ class AllianceHandler(BaseHTTPRequestHandler):
             payload = self.read_json()
             self.create_member(payload)
             return
+        if parsed.path == "/api/profile/me/screenshot":
+            user = self.require_normal_user()
+            if not user:
+                return
+            self.upload_current_user_screenshot(user)
+            return
+        if parsed.path == "/api/login":
+            AuthHandler(self).login()
+            return
+        if parsed.path == "/api/logout":
+            AuthHandler(self).logout()
+            return
         if parsed.path == "/api/announcements":
             admin = self.require_admin()
             if not admin:
@@ -309,9 +468,31 @@ class AllianceHandler(BaseHTTPRequestHandler):
             payload = self.read_json()
             self.create_announcement(payload)
             return
+        if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
+            admin = self.require_admin()
+            if not admin:
+                return
+            member_id = parsed.path.strip("/").split("/")[2]
+            self.upload_member_screenshot(member_id)
+            return
         self.send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
 
     def handle_api_put(self, parsed):
+        if parsed.path.startswith("/api/guilds/"):
+            admin = self.require_admin()
+            if not admin:
+                return
+            payload = self.read_json()
+            guild_key = unquote(parsed.path.rsplit("/", 1)[-1])
+            self.update_guild(guild_key, payload)
+            return
+        if parsed.path == "/api/profile/me":
+            user = self.require_normal_user()
+            if not user:
+                return
+            payload = self.read_json()
+            self.update_current_user_profile(user, payload)
+            return
         if parsed.path.startswith("/api/members/"):
             admin = self.require_admin()
             if not admin:
@@ -331,6 +512,26 @@ class AllianceHandler(BaseHTTPRequestHandler):
         self.send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
 
     def handle_api_delete(self, parsed):
+        if parsed.path.startswith("/api/guilds/"):
+            admin = self.require_admin()
+            if not admin:
+                return
+            guild_key = unquote(parsed.path.rsplit("/", 1)[-1])
+            self.delete_guild(guild_key)
+            return
+        if parsed.path == "/api/profile/me/screenshot":
+            user = self.require_normal_user()
+            if not user:
+                return
+            self.delete_current_user_screenshot(user)
+            return
+        if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
+            admin = self.require_admin()
+            if not admin:
+                return
+            member_id = parsed.path.strip("/").split("/")[2]
+            self.delete_member_screenshot(member_id)
+            return
         if parsed.path.startswith("/api/members/"):
             admin = self.require_admin()
             if not admin:
@@ -350,10 +551,28 @@ class AllianceHandler(BaseHTTPRequestHandler):
     def build_dashboard(self):
         with open_db() as connection:
             members = [dict(row) for row in connection.execute("SELECT * FROM members").fetchall()]
+            guild_registry = [dict(row) for row in connection.execute("SELECT * FROM guild_registry").fetchall()]
             announcements = [dict(row) for row in connection.execute("SELECT * FROM announcements ORDER BY id DESC").fetchall()]
 
         total_power = sum(member["power"] for member in members)
         hill_map = {}
+        for registry in guild_registry:
+            hill_name = registry["hill"] or "默认山头"
+            guild_key = registry["guild_key"]
+            hill_entry = hill_map.setdefault(hill_name, {"count": 0, "power": 0, "guilds": {}})
+            hill_entry["guilds"].setdefault(guild_key, {
+                "name": registry["guild"],
+                "code": registry.get("guild_code", ""),
+                "prefix": registry.get("guild_prefix", ""),
+                "display_name": build_guild_display_name(registry.get("guild_code", ""), registry.get("guild_prefix", ""), registry["guild"]),
+                "count": 0,
+                "power": 0,
+                "custom_power": int(registry.get("guild_power", 0) or 0),
+                "top_member": None,
+                "leader_name": registry.get("leader_name", ""),
+                "updated_at": registry.get("updated_at", ""),
+            })
+
         for member in members:
             hill_name = member["hill"] or "默认山头"
             guild_name = member["guild"]
@@ -371,12 +590,17 @@ class AllianceHandler(BaseHTTPRequestHandler):
                 "count": 0,
                 "power": 0,
                 "custom_power": 0,
-                "top_member": member,
+                "top_member": None,
+                "leader_name": "",
+                "updated_at": "",
             })
             guild_entry["count"] += 1
             guild_entry["power"] += member["power"]
             guild_entry["custom_power"] = max(guild_entry["custom_power"], int(member.get("guild_power", 0) or 0))
-            if member["power"] > guild_entry["top_member"]["power"]:
+            guild_entry["updated_at"] = max(guild_entry.get("updated_at", ""), member.get("updated_at", "") or member.get("created_at", ""))
+            if member.get("role") == "盟主" and member.get("name"):
+                guild_entry["leader_name"] = member["name"]
+            if guild_entry["top_member"] is None or member["power"] > guild_entry["top_member"]["power"]:
                 guild_entry["top_member"] = member
 
         hills = []
@@ -385,6 +609,7 @@ class AllianceHandler(BaseHTTPRequestHandler):
             guilds = []
             for _, guild_info in sorted(hill_info["guilds"].items(), key=lambda item: item[1]["power"], reverse=True):
                 guild_payload = {
+                    "key": build_guild_key(guild_info["code"], guild_info["prefix"], guild_info["name"]),
                     "name": guild_info["name"],
                     "code": guild_info["code"],
                     "prefix": guild_info["prefix"],
@@ -393,7 +618,9 @@ class AllianceHandler(BaseHTTPRequestHandler):
                     "count": guild_info["count"],
                     "power": guild_info["custom_power"] or guild_info["power"],
                     "custom_power": guild_info["custom_power"],
-                    "top_member": serialize_member(guild_info["top_member"]),
+                    "top_member": serialize_member(guild_info["top_member"]) if guild_info["top_member"] else None,
+                    "leader_name": guild_info.get("leader_name", ""),
+                    "updated_at": guild_info.get("updated_at", ""),
                 }
                 guilds.append(guild_payload)
                 flat_guilds.append(guild_payload)
@@ -491,20 +718,9 @@ class AllianceHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"message": "登录成功", "admin": {"username": row["username"], "display_name": row["display_name"]}}, ensure_ascii=False).encode("utf-8"))
 
     def logout(self):
-        """用户登出 - 同时清理 auth.py 的 sessions"""
         token = self.read_session_token()
-        
-        # 清理 server.py 的 sessions
         if token:
             sessions.pop(token, None)
-        
-        # 同时清理 auth.py 的 user_sessions
-        try:
-            from auth import user_sessions
-            if token and token in user_sessions:
-                user_sessions.pop(token, None)
-        except Exception:
-            pass
 
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -519,25 +735,71 @@ class AllianceHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
             return
         timestamp = now_text()
+        member["created_at"] = timestamp
+        member["updated_at"] = timestamp
         with open_db() as connection:
+            if not guild_exists(connection, member["guild_code"], member["guild_prefix"], member["guild"]):
+                self.send_json({"error": "该妖盟不存在，请先创建妖盟"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if member_name_exists(connection, member["guild_code"], member["guild_prefix"], member["guild"], member["name"]):
+                self.send_json({"error": "该成员在当前妖盟里已存在"}, status=HTTPStatus.CONFLICT)
+                return
             cursor = connection.execute(
                 """
                 INSERT INTO members (
-                    alliance, hill, guild_code, guild_prefix, guild_power, guild, name, role, realm, power, hp, attack, defense, speed, bonus_damage, damage_reduction, pet, note, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    alliance, hill, guild_code, guild_prefix, guild_power, guild, name, role, realm, power, hp, attack, defense, speed, bonus_damage, damage_reduction, pet, note, screenshot_path, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     member["alliance"], member["hill"], member["guild_code"], member["guild_prefix"], member["guild_power"], member["guild"], member["name"], member["role"], member["realm"], member["power"],
                     member["hp"], member["attack"], member["defense"], member["speed"], member["bonus_damage"], member["damage_reduction"], member["pet"], member["note"],
+                    member["screenshot_path"],
                     timestamp, timestamp,
                 ),
             )
+            upsert_guild_registry(connection, member)
             connection.commit()
 
         member["id"] = cursor.lastrowid
-        member["created_at"] = timestamp
-        member["updated_at"] = timestamp
         self.send_json({"message": "成员创建成功", "item": member}, status=HTTPStatus.CREATED)
+
+    def create_guild(self, payload):
+        try:
+            guild = validate_guild(payload)
+        except ValueError as error:
+            self.send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        timestamp = now_text()
+        guild["updated_at"] = timestamp
+        guild_key = build_guild_key(guild["guild_code"], guild["guild_prefix"], guild["guild"])
+        with open_db() as connection:
+            if guild_exists(connection, guild["guild_code"], guild["guild_prefix"], guild["guild"]):
+                self.send_json({"error": f"妖盟编号 {guild['guild_code'] or guild['guild']} 已存在，不能重复创建"}, status=HTTPStatus.CONFLICT)
+                return
+            exists = connection.execute("SELECT 1 FROM guild_registry WHERE guild_key = ?", (guild_key,)).fetchone()
+            if exists:
+                self.send_json({"error": "该妖盟已存在"}, status=HTTPStatus.CONFLICT)
+                return
+            connection.execute(
+                """
+                INSERT INTO guild_registry (
+                    guild_key, alliance, hill, guild_code, guild_prefix, guild, guild_power, leader_name, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    guild_key,
+                    guild["alliance"],
+                    guild["hill"],
+                    guild["guild_code"],
+                    guild["guild_prefix"],
+                    guild["guild"],
+                    guild["guild_power"],
+                    guild["leader_name"],
+                    timestamp,
+                ),
+            )
+            connection.commit()
+        self.send_json({"message": "妖盟创建成功", "item": {**guild, "guild_key": guild_key}}, status=HTTPStatus.CREATED)
 
     def update_member(self, member_id, payload):
         try:
@@ -547,18 +809,44 @@ class AllianceHandler(BaseHTTPRequestHandler):
             return
         timestamp = now_text()
         with open_db() as connection:
+            existing = connection.execute(
+                "SELECT guild_code, guild_prefix, guild FROM members WHERE id = ?",
+                (member_id,),
+            ).fetchone()
+            if not existing:
+                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if not guild_exists(connection, member["guild_code"], member["guild_prefix"], member["guild"]):
+                self.send_json({"error": "目标妖盟不存在，请先创建妖盟"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if member["name"] and member_name_exists(connection, member["guild_code"], member["guild_prefix"], member["guild"], member["name"], exclude_id=int(member_id)):
+                self.send_json({"error": "该成员在当前妖盟里已存在"}, status=HTTPStatus.CONFLICT)
+                return
             cursor = connection.execute(
                 """
                 UPDATE members
-                SET alliance = ?, hill = ?, guild_code = ?, guild_prefix = ?, guild_power = ?, guild = ?, name = ?, role = ?, realm = ?, power = ?, hp = ?, attack = ?, defense = ?, speed = ?, bonus_damage = ?, damage_reduction = ?, pet = ?, note = ?, updated_at = ?
+                SET alliance = ?, hill = ?, guild_code = ?, guild_prefix = ?, guild_power = ?, guild = ?, name = ?, role = ?, realm = ?, power = ?, hp = ?, attack = ?, defense = ?, speed = ?, bonus_damage = ?, damage_reduction = ?, pet = ?, note = ?, screenshot_path = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     member["alliance"], member["hill"], member["guild_code"], member["guild_prefix"], member["guild_power"], member["guild"], member["name"], member["role"], member["realm"], member["power"],
                     member["hp"], member["attack"], member["defense"], member["speed"], member["bonus_damage"], member["damage_reduction"], member["pet"], member["note"],
+                    member["screenshot_path"],
                     timestamp, member_id,
                 ),
             )
+            member["updated_at"] = timestamp
+            upsert_guild_registry(connection, member)
+            if existing:
+                old_key = build_guild_key(existing["guild_code"], existing["guild_prefix"], existing["guild"])
+                new_key = build_guild_key(member["guild_code"], member["guild_prefix"], member["guild"])
+                if old_key != new_key:
+                    remaining = connection.execute(
+                        "SELECT COUNT(*) AS count FROM members WHERE guild_code = ? AND guild_prefix = ? AND guild = ?",
+                        (existing["guild_code"], existing["guild_prefix"], existing["guild"]),
+                    ).fetchone()["count"]
+                    if remaining == 0:
+                        connection.execute("DELETE FROM guild_registry WHERE guild_key = ?", (old_key,))
             connection.commit()
 
         if cursor.rowcount == 0:
@@ -568,6 +856,114 @@ class AllianceHandler(BaseHTTPRequestHandler):
         member["id"] = int(member_id)
         member["updated_at"] = timestamp
         self.send_json({"message": "成员更新成功", "item": member})
+
+    def update_guild(self, guild_key, payload):
+        try:
+            guild = validate_guild(payload)
+        except ValueError as error:
+            self.send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        next_key = build_guild_key(guild["guild_code"], guild["guild_prefix"], guild["guild"])
+        timestamp = now_text()
+        with open_db() as connection:
+            existing = connection.execute("SELECT * FROM guild_registry WHERE guild_key = ?", (guild_key,)).fetchone()
+            if not existing:
+                self.send_json({"error": "妖盟不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            duplicate_code = guild_exists(connection, guild["guild_code"], guild["guild_prefix"], guild["guild"], exclude_key=guild_key)
+            if duplicate_code:
+                self.send_json({"error": f"妖盟编号 {guild['guild_code'] or guild['guild']} 已存在，不能重复保存"}, status=HTTPStatus.CONFLICT)
+                return
+            if next_key != guild_key:
+                conflict = connection.execute("SELECT 1 FROM guild_registry WHERE guild_key = ?", (next_key,)).fetchone()
+                if conflict:
+                    self.send_json({"error": "新的妖盟标识已存在"}, status=HTTPStatus.CONFLICT)
+                    return
+                connection.execute("DELETE FROM guild_registry WHERE guild_key = ?", (guild_key,))
+            connection.execute(
+                """
+                INSERT INTO guild_registry (
+                    guild_key, alliance, hill, guild_code, guild_prefix, guild, guild_power, leader_name, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_key) DO UPDATE SET
+                    alliance = excluded.alliance,
+                    hill = excluded.hill,
+                    guild_code = excluded.guild_code,
+                    guild_prefix = excluded.guild_prefix,
+                    guild = excluded.guild,
+                    guild_power = excluded.guild_power,
+                    leader_name = excluded.leader_name,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    next_key,
+                    guild["alliance"],
+                    guild["hill"],
+                    guild["guild_code"],
+                    guild["guild_prefix"],
+                    guild["guild"],
+                    guild["guild_power"],
+                    guild["leader_name"],
+                    timestamp,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE members
+                SET alliance = ?, hill = ?, guild_code = ?, guild_prefix = ?, guild = ?, guild_power = ?, updated_at = ?
+                WHERE guild_code = ? AND guild_prefix = ? AND guild = ?
+                """,
+                (
+                    guild["alliance"],
+                    guild["hill"],
+                    guild["guild_code"],
+                    guild["guild_prefix"],
+                    guild["guild"],
+                    guild["guild_power"],
+                    timestamp,
+                    existing["guild_code"],
+                    existing["guild_prefix"],
+                    existing["guild"],
+                ),
+            )
+            if guild["leader_name"]:
+                connection.execute(
+                    """
+                    UPDATE members
+                    SET name = ?, updated_at = ?
+                    WHERE guild_code = ? AND guild_prefix = ? AND guild = ? AND id = (
+                        SELECT id FROM members
+                        WHERE guild_code = ? AND guild_prefix = ? AND guild = ?
+                        ORDER BY power DESC, id ASC LIMIT 1
+                    )
+                    """,
+                    (
+                        guild["leader_name"],
+                        timestamp,
+                        guild["guild_code"],
+                        guild["guild_prefix"],
+                        guild["guild"],
+                        guild["guild_code"],
+                        guild["guild_prefix"],
+                        guild["guild"],
+                    ),
+                )
+            connection.commit()
+        self.send_json({"message": "妖盟更新成功", "item": {**guild, "guild_key": next_key}})
+
+    def delete_guild(self, guild_key):
+        with open_db() as connection:
+            existing = connection.execute("SELECT * FROM guild_registry WHERE guild_key = ?", (guild_key,)).fetchone()
+            if not existing:
+                self.send_json({"error": "妖盟不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            connection.execute(
+                "DELETE FROM members WHERE guild_code = ? AND guild_prefix = ? AND guild = ?",
+                (existing["guild_code"], existing["guild_prefix"], existing["guild"]),
+            )
+            connection.execute("DELETE FROM guild_registry WHERE guild_key = ?", (guild_key,))
+            connection.commit()
+        self.send_json({"message": "妖盟删除成功"})
 
     def create_announcement(self, payload):
         title = str(payload.get("title", "")).strip()
@@ -614,10 +1010,213 @@ class AllianceHandler(BaseHTTPRequestHandler):
 
         self.send_json({"message": "内容更新成功"})
 
+    def get_member_screenshot(self, member_id):
+        if not member_id.isdigit():
+            return {"error": "参数无效"}
+        with open_db() as connection:
+            row = connection.execute("SELECT id, name, screenshot_path FROM members WHERE id = ?", (member_id,)).fetchone()
+        if not row:
+            return {"error": "成员不存在"}
+        screenshot_url = row["screenshot_path"] or ""
+        return {
+            "member_id": row["id"],
+            "member_name": row["name"],
+            "screenshot_url": screenshot_url,
+            "has_screenshot": bool(screenshot_url),
+        }
+
+    def upload_member_screenshot(self, member_id):
+        if not member_id.isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        with open_db() as connection:
+            row = connection.execute("SELECT id, screenshot_path FROM members WHERE id = ?", (member_id,)).fetchone()
+        if not row:
+            self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+            return
+
+        form = FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+            },
+        )
+        file_item = form["screenshot"] if "screenshot" in form else None
+        if file_item is None or getattr(file_item, "file", None) is None:
+            self.send_json({"error": "请先选择截图文件"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        raw = file_item.file.read()
+        if not raw:
+            self.send_json({"error": "截图文件不能为空"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if len(raw) > 8 * 1024 * 1024:
+            self.send_json({"error": "截图不能超过 8MB"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        filename = Path(getattr(file_item, "filename", "") or "")
+        suffix = filename.suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            self.send_json({"error": "仅支持 png、jpg、jpeg、gif、webp 图片"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        self.delete_member_screenshot_file(row["screenshot_path"])
+        version_token = datetime.now().strftime("%Y%m%d%H%M%S")
+        relative_path = f"/uploads/member-screenshots/member-{member_id}-{version_token}{suffix}"
+        target_path = PUBLIC_DIR / relative_path.lstrip("/")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(raw)
+
+        timestamp = now_text()
+        with open_db() as connection:
+            connection.execute(
+                "UPDATE members SET screenshot_path = ?, updated_at = ? WHERE id = ?",
+                (relative_path, timestamp, member_id),
+            )
+            connection.commit()
+
+        self.send_json(
+            {
+                "message": "成员截图上传成功",
+                "item": {
+                    "member_id": int(member_id),
+                    "screenshot_url": relative_path,
+                    "updated_at": timestamp,
+                },
+            }
+        )
+
+    def delete_member_screenshot(self, member_id):
+        if not member_id.isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        with open_db() as connection:
+            row = connection.execute("SELECT id, screenshot_path FROM members WHERE id = ?", (member_id,)).fetchone()
+        if not row:
+            self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+            return
+        if not row["screenshot_path"]:
+            self.send_json({"error": "该成员当前没有截图"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        self.delete_member_screenshot_file(row["screenshot_path"])
+        timestamp = now_text()
+        with open_db() as connection:
+            connection.execute(
+                "UPDATE members SET screenshot_path = '', updated_at = ? WHERE id = ?",
+                (timestamp, member_id),
+            )
+            connection.commit()
+
+        self.send_json(
+            {
+                "message": "成员截图已删除",
+                "item": {
+                    "member_id": int(member_id),
+                    "screenshot_url": "",
+                    "updated_at": timestamp,
+                },
+            }
+        )
+
+    def get_current_user_profile(self):
+        current = get_current_auth(self)
+        if not current.get("authenticated"):
+            return {"authenticated": False, "account": None, "member": None, "linked": False, "is_admin": False}
+        if current.get("is_admin"):
+            return {
+                "authenticated": True,
+                "account": current["user"],
+                "member": None,
+                "linked": False,
+                "is_admin": True,
+            }
+
+        member = self.fetch_member_for_user(current["user"]["id"])
+        return {
+            "authenticated": True,
+            "account": current["user"],
+            "member": member,
+            "linked": bool(member),
+            "is_admin": False,
+            "auto_link_hint": "用户名与成员昵称完全一致时，系统会自动关联成员档案。",
+        }
+
+    def fetch_member_for_user(self, user_id):
+        with open_db() as connection:
+            row = connection.execute(
+                """
+                SELECT m.*
+                FROM users u
+                LEFT JOIN members m ON m.id = u.member_id
+                WHERE u.id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if not row or row["id"] is None:
+            return None
+        return serialize_member(dict(row))
+
+    def update_current_user_profile(self, user, payload):
+        member = self.fetch_member_for_user(user["id"])
+        if not member:
+            self.send_json({"error": "当前账号还没有关联成员档案，请先联系管理员确认，或使用与成员昵称一致的账号登录"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        try:
+            name = str(payload.get("name", member["name"])).strip() or member["name"]
+            realm = str(payload.get("realm", member["realm"])).strip() or member["realm"]
+            power = parse_scaled_number(payload.get("power", member["power"]), "战力")
+            speed = parse_scaled_number(payload.get("speed", member["speed"]), "敏捷")
+            bonus_damage = parse_scaled_number(payload.get("bonus_damage", member["bonus_damage"]), "增伤")
+            damage_reduction = parse_scaled_number(payload.get("damage_reduction", member["damage_reduction"]), "减伤")
+            pet = str(payload.get("pet", member["pet"])).strip() or member["pet"]
+            note = str(payload.get("note", member["note"])).strip()
+        except (TypeError, ValueError):
+            self.send_json({"error": "个人信息里的数值格式不正确"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        timestamp = now_text()
+        with open_db() as connection:
+            connection.execute(
+                """
+                UPDATE members
+                SET name = ?, realm = ?, power = ?, speed = ?, bonus_damage = ?, damage_reduction = ?, pet = ?, note = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (name, realm, power, speed, bonus_damage, damage_reduction, pet, note, timestamp, member["id"]),
+            )
+            connection.commit()
+
+        self.send_json({"message": "个人信息更新成功", "item": self.fetch_member_for_user(user["id"])})
+
+    def upload_current_user_screenshot(self, user):
+        member = self.fetch_member_for_user(user["id"])
+        if not member:
+            self.send_json({"error": "当前账号还没有关联成员档案，暂时无法上传截图"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self.upload_member_screenshot(str(member["id"]))
+
+    def delete_current_user_screenshot(self, user):
+        member = self.fetch_member_for_user(user["id"])
+        if not member:
+            self.send_json({"error": "当前账号还没有关联成员档案，暂时无法删除截图"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self.delete_member_screenshot(str(member["id"]))
+
     def delete_by_id(self, table_name, record_id):
         if not record_id.isdigit():
             self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
             return
+        if table_name == "members":
+            with open_db() as connection:
+                row = connection.execute("SELECT screenshot_path FROM members WHERE id = ?", (record_id,)).fetchone()
+            if row and row["screenshot_path"]:
+                self.delete_member_screenshot_file(row["screenshot_path"])
         with open_db() as connection:
             cursor = connection.execute(f"DELETE FROM {table_name} WHERE id = ?", (record_id,))
             connection.commit()
@@ -636,20 +1235,27 @@ class AllianceHandler(BaseHTTPRequestHandler):
             raise
 
     def require_admin(self):
-        admin = self.get_current_admin()
-        if not admin:
+        current = get_current_auth(self)
+        if not current.get("authenticated") or not current.get("is_admin"):
             self.send_json({"error": "请先登录管理员账号"}, status=HTTPStatus.UNAUTHORIZED)
             return None
-        return admin
+        return current["user"]
+
+    def require_normal_user(self):
+        current = get_current_auth(self)
+        if not current.get("authenticated"):
+            self.send_json({"error": "请先登录普通用户账号"}, status=HTTPStatus.UNAUTHORIZED)
+            return None
+        if current.get("is_admin"):
+            self.send_json({"error": "管理员请使用管理员功能页面"}, status=HTTPStatus.FORBIDDEN)
+            return None
+        return current["user"]
 
     def get_current_admin(self):
-        token = self.read_session_token()
-        if not token:
+        current = get_current_auth(self)
+        if not current.get("authenticated") or not current.get("is_admin"):
             return None
-        session = sessions.get(token)
-        if not session:
-            return None
-        return {"username": session["username"], "display_name": session["display_name"]}
+        return current["user"]
 
     def read_session_token(self):
         cookie_header = self.headers.get("Cookie")
@@ -660,6 +1266,18 @@ class AllianceHandler(BaseHTTPRequestHandler):
         morsel = cookie.get(SESSION_COOKIE)
         return morsel.value if morsel else None
 
+    def delete_member_screenshot_file(self, screenshot_path):
+        if not screenshot_path:
+            return
+        target = PUBLIC_DIR / str(screenshot_path).lstrip("/")
+        try:
+            resolved = target.resolve()
+            uploads_root = UPLOADS_DIR.resolve()
+            if str(resolved).startswith(str(uploads_root)) and resolved.exists():
+                resolved.unlink()
+        except FileNotFoundError:
+            return
+
     def send_json(self, payload, status=HTTPStatus.OK):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -668,58 +1286,53 @@ class AllianceHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    # ============ 认证 API 处理方法 ============
-    
-    def handle_auth_get(self, parsed):
-        """处理认证 GET 请求"""
-        # 初始化认证数据库
-        try:
-            initialize_auth_database()
-        except Exception:
-            pass
-        
-        auth_handler = AuthHandler(self)
-        return auth_handler.handle_get(parsed)
-
-    def handle_auth_post(self, parsed):
-        """处理认证 POST 请求"""
-        # 初始化认证数据库
-        try:
-            initialize_auth_database()
-        except Exception:
-            pass
-        
-        auth_handler = AuthHandler(self)
-        return auth_handler.handle_post(parsed)
-    
     def log_message(self, fmt, *args):
         sys.stdout.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), fmt % args))
 
 
 def validate_member(payload):
+    allow_empty_name = bool(payload.get("allow_empty_name"))
     member = {
-        "alliance": str(payload.get("alliance", "")).strip() or "青云联盟",
+        "alliance": str(payload.get("alliance", "")).strip() or "🔮联盟",
         "hill": str(payload.get("hill", "")).strip() or "默认山头",
         "guild_code": str(payload.get("guild_code", "")).strip(),
         "guild_prefix": str(payload.get("guild_prefix", "")).strip(),
-        "guild_power": int(payload.get("guild_power", 0) or 0),
+        "guild_power": parse_scaled_number(payload.get("guild_power", 0), "妖盟总战力"),
         "guild": str(payload.get("guild", "")).strip(),
         "name": str(payload.get("name", "")).strip(),
         "role": str(payload.get("role", "")).strip() or "成员",
         "realm": str(payload.get("realm", "")).strip() or "待补充",
-        "power": int(payload.get("power", 0) or 0),
-        "hp": int(payload.get("hp", 0) or 0),
-        "attack": int(payload.get("attack", 0) or 0),
-        "defense": int(payload.get("defense", 0) or 0),
-        "speed": int(payload.get("speed", 0) or 0),
-        "bonus_damage": int(payload.get("bonus_damage", 0) or 0),
-        "damage_reduction": int(payload.get("damage_reduction", 0) or 0),
+        "power": parse_scaled_number(payload.get("power", 0), "战力"),
+        "hp": parse_scaled_number(payload.get("hp", 0), "生命"),
+        "attack": parse_scaled_number(payload.get("attack", 0), "攻击"),
+        "defense": parse_scaled_number(payload.get("defense", 0), "防御"),
+        "speed": parse_scaled_number(payload.get("speed", 0), "敏捷"),
+        "bonus_damage": parse_scaled_number(payload.get("bonus_damage", 0), "增伤"),
+        "damage_reduction": parse_scaled_number(payload.get("damage_reduction", 0), "减伤"),
         "pet": str(payload.get("pet", "")).strip() or "待补充",
         "note": str(payload.get("note", "")).strip(),
+        "screenshot_path": str(payload.get("screenshot_path", "")).strip(),
     }
-    if not member["guild"] or not member["name"]:
-        raise ValueError("妖盟和成员昵称不能为空")
+    if not member["guild"]:
+        raise ValueError("妖盟不能为空")
+    if not member["name"] and member["role"] != "盟主" and not allow_empty_name:
+        raise ValueError("成员昵称不能为空")
     return member
+
+
+def validate_guild(payload):
+    guild = {
+        "alliance": str(payload.get("alliance", "")).strip() or "🔮联盟",
+        "hill": str(payload.get("hill", "")).strip() or str(payload.get("alliance", "")).strip() or "🔮联盟",
+        "guild_code": str(payload.get("guild_code", "")).strip(),
+        "guild_prefix": str(payload.get("guild_prefix", "")).strip(),
+        "guild_power": parse_scaled_number(payload.get("guild_power", 0), "妖盟总战力"),
+        "guild": str(payload.get("guild", "")).strip(),
+        "leader_name": str(payload.get("leader_name", "")).strip(),
+    }
+    if not guild["guild"]:
+        raise ValueError("妖盟不能为空")
+    return guild
 
 
 def serialize_member(member):
@@ -744,30 +1357,16 @@ def serialize_member(member):
         "damage_reduction": member.get("damage_reduction", 0),
         "pet": member["pet"],
         "note": member["note"],
+        "screenshot_url": member.get("screenshot_path", ""),
+        "has_screenshot": bool(member.get("screenshot_path")),
         "created_at": member.get("created_at"),
         "updated_at": member.get("updated_at"),
     }
 
 
-def build_guild_display_name(guild_code, guild_prefix, guild_name):
-    parts = [str(guild_code or "").strip(), str(guild_prefix or "").strip(), str(guild_name or "").strip()]
-    return " ".join(part for part in parts if part)
-
-
-def build_guild_key(guild_code, guild_prefix, guild_name):
-    return "|".join([
-        str(guild_code or "").strip(),
-        str(guild_prefix or "").strip(),
-        str(guild_name or "").strip(),
-    ])
-
-
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
     initialize_database()
+    initialize_auth_database()
     server = ThreadingHTTPServer((HOST, PORT), AllianceHandler)
     print(f"寻道大千联盟信息站已启动: http://{HOST}:{PORT}")
     print("默认管理员账号: admin")
@@ -780,3 +1379,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\n服务器已停止")
+

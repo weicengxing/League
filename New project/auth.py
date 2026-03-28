@@ -105,6 +105,7 @@ def initialize_auth_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
                 email TEXT NOT NULL UNIQUE,
+                member_id INTEGER,
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
                 verify_code TEXT,
@@ -114,6 +115,9 @@ def initialize_auth_database():
             );
             """
         )
+        columns = [row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()]
+        if "member_id" not in columns:
+            connection.execute("ALTER TABLE users ADD COLUMN member_id INTEGER")
         connection.commit()
 
 
@@ -123,6 +127,79 @@ def cleanup_user_sessions():
     expired = [token for token, value in user_sessions.items() if current - value["created_at"] > USER_SESSION_TTL_SECONDS]
     for token in expired:
         user_sessions.pop(token, None)
+
+
+def read_session_token_from_handler(handler):
+    cookie_header = handler.headers.get("Cookie")
+    if not cookie_header:
+        return None
+    cookie = SimpleCookie()
+    cookie.load(cookie_header)
+    morsel = cookie.get(USER_SESSION_COOKIE)
+    return morsel.value if morsel else None
+
+
+def get_session_from_handler(handler):
+    token = read_session_token_from_handler(handler)
+    if not token:
+        return None
+    return user_sessions.get(token)
+
+
+def get_current_auth(handler):
+    session = get_session_from_handler(handler)
+    if not session:
+        return {"authenticated": False, "user": None, "is_admin": False}
+
+    user = {
+        "id": session["user_id"],
+        "username": session["username"],
+        "is_admin": bool(session.get("is_admin")),
+    }
+    if session.get("is_admin"):
+        user["display_name"] = session.get("display_name", session["username"])
+    else:
+        user["email"] = session.get("email")
+        user["member_id"] = session.get("member_id")
+
+    return {
+        "authenticated": True,
+        "user": user,
+        "is_admin": bool(session.get("is_admin")),
+    }
+
+
+def ensure_member_binding(connection, user_row):
+    """尝试按用户名自动关联同名成员，避免普通用户登录后没有个人档案。"""
+    member_id = user_row["member_id"] if "member_id" in user_row.keys() else None
+    if member_id:
+        return member_id
+
+    try:
+        matches = connection.execute(
+            "SELECT id FROM members WHERE name = ? ORDER BY id ASC",
+            (user_row["username"],),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+
+    if len(matches) != 1:
+        return None
+
+    member_id = matches[0]["id"]
+    existing = connection.execute(
+        "SELECT id FROM users WHERE member_id = ? AND id != ?",
+        (member_id, user_row["id"]),
+    ).fetchone()
+    if existing:
+        return None
+
+    connection.execute(
+        "UPDATE users SET member_id = ? WHERE id = ?",
+        (member_id, user_row["id"]),
+    )
+    connection.commit()
+    return member_id
 
 
 class AuthHandler:
@@ -287,11 +364,13 @@ class AuthHandler:
                 return self.send_json({"error": "账号已被禁用"}, HTTPStatus.FORBIDDEN)
 
             # 普通用户登录成功
+            member_id = ensure_member_binding(connection, row)
             token = secrets.token_hex(24)
             user_sessions[token] = {
                 "user_id": row["id"],
                 "username": row["username"],
                 "email": row["email"],
+                "member_id": member_id,
                 "is_admin": False,
                 "created_at": datetime.now().timestamp(),
             }
@@ -306,13 +385,14 @@ class AuthHandler:
             self.handler.wfile.write(
                 json.dumps({
                     "message": "登录成功",
-                    "is_admin": False,
-                    "user": {
-                        "id": row["id"],
-                        "username": row["username"],
-                        "email": row["email"],
-                    }
-                }, ensure_ascii=False).encode("utf-8")
+                        "is_admin": False,
+                        "user": {
+                            "id": row["id"],
+                            "username": row["username"],
+                            "email": row["email"],
+                            "member_id": member_id,
+                        }
+                    }, ensure_ascii=False).encode("utf-8")
             )
 
     def logout(self):
@@ -466,26 +546,14 @@ class AuthHandler:
 
     def get_current_user(self):
         """获取当前登录用户信息"""
-        admin = self.get_current_admin_from_session()
-        if admin:
-            return self.send_json({"authenticated": True, "user": admin, "is_admin": True})
-        
-        user = self.get_current_user_from_session()
-        if user:
-            return self.send_json({"authenticated": True, "user": user, "is_admin": False})
-        
-        return self.send_json({"authenticated": False, "user": None})
+        return self.send_json(get_current_auth(self.handler))
 
     def check_session(self):
         """检查会话是否有效"""
-        token = self.read_session_token()
-        if not token:
-            return self.send_json({"valid": False, "user": None})
-        
-        session = user_sessions.get(token)
+        session = get_session_from_handler(self.handler)
         if not session:
             return self.send_json({"valid": False, "user": None})
-        
+
         user_info = {
             "id": session["user_id"],
             "username": session["username"],
@@ -502,29 +570,33 @@ class AuthHandler:
 
     def get_current_user_from_session(self):
         """从会话获取当前用户"""
-        token = self.read_session_token()
-        if not token:
-            return None
-        session = user_sessions.get(token)
+        session = get_session_from_handler(self.handler)
         if not session:
             return None
-        return {"id": session["user_id"], "username": session["username"], "email": session["email"]}
+        if session.get("is_admin"):
+            return None
+        return {
+            "id": session["user_id"],
+            "username": session["username"],
+            "email": session["email"],
+            "member_id": session.get("member_id"),
+        }
 
     def get_current_admin_from_session(self):
         """从管理员会话获取当前管理员"""
-        # 这里需要从 server.py 的 sessions 获取
-        # 暂时返回 None，让 server.py 处理
-        return None
+        session = get_session_from_handler(self.handler)
+        if not session or not session.get("is_admin"):
+            return None
+        return {
+            "id": session["user_id"],
+            "username": session["username"],
+            "display_name": session.get("display_name", session["username"]),
+            "is_admin": True,
+        }
 
     def read_session_token(self):
         """读取会话 Token"""
-        cookie_header = self.handler.headers.get("Cookie")
-        if not cookie_header:
-            return None
-        cookie = SimpleCookie()
-        cookie.load(cookie_header)
-        morsel = cookie.get(USER_SESSION_COOKIE)
-        return morsel.value if morsel else None
+        return read_session_token_from_handler(self.handler)
 
     def read_json(self):
         """读取 JSON 请求体"""
@@ -558,19 +630,23 @@ def mask_email(email: str) -> str:
 
 def require_user(handler) -> dict | None:
     """验证用户是否登录"""
-    cookie_header = handler.headers.get("Cookie")
-    if not cookie_header:
-        return None
-    cookie = SimpleCookie()
-    cookie.load(cookie_header)
-    morsel = cookie.get(USER_SESSION_COOKIE)
-    if not morsel:
-        return None
-    token = morsel.value
-    session = user_sessions.get(token)
+    session = get_session_from_handler(handler)
     if not session:
         return None
-    return {"id": session["user_id"], "username": session["username"], "email": session["email"]}
+    if session.get("is_admin"):
+        return {
+            "id": session["user_id"],
+            "username": session["username"],
+            "display_name": session.get("display_name", session["username"]),
+            "is_admin": True,
+        }
+    return {
+        "id": session["user_id"],
+        "username": session["username"],
+        "email": session["email"],
+        "member_id": session.get("member_id"),
+        "is_admin": False,
+    }
 
 
 if __name__ == "__main__":

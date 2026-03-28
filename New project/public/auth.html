@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录与注册 - 寻道大千联盟信息站</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --sky-top: #5fb8a8;
+      --sky-mid: #8fd3b6;
+      --sky-bottom: #f2d59b;
+      --mist: rgba(248, 245, 230, 0.28);
+      --card: rgba(44, 31, 18, 0.72);
+      --card-border: rgba(236, 209, 156, 0.24);
+      --text-main: #f6ead0;
+      --text-soft: rgba(246, 234, 208, 0.76);
+      --gold: #efc978;
+      --gold-deep: #b8863b;
+      --jade: #9bd0a6;
+      --danger: #ffb0a5;
+      --success: #b8f0c4;
+      --input-bg: rgba(255, 247, 231, 0.1);
+      --input-line: rgba(238, 209, 154, 0.22);
+      --shadow: 0 30px 80px rgba(13, 20, 14, 0.45);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Outfit", "Noto Serif SC", sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at 15% 18%, rgba(255, 241, 191, 0.32), transparent 20%),
+        linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 38%, var(--sky-bottom) 100%);
+    }
+    .auth-page {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .auth-shell {
+      width: min(1200px, 100%);
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      border-radius: 36px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      background: rgba(21, 29, 19, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(16px);
+    }
+    .auth-scene {
+      position: relative;
+      min-height: 780px;
+      padding: 56px 52px 48px;
+      background:
+        radial-gradient(circle at 50% 18%, rgba(255, 245, 196, 0.3), transparent 26%),
+        linear-gradient(180deg, rgba(28, 62, 41, 0.88), rgba(16, 28, 18, 0.92));
+      overflow: hidden;
+    }
+    .scene-mountains,
+    .scene-aura,
+    .scene-mist,
+    .scene-leaves { position: absolute; inset: 0; pointer-events: none; }
+    .scene-mountains {
+      background:
+        radial-gradient(circle at 20% 95%, rgba(111, 156, 112, 0.48), transparent 23%),
+        radial-gradient(circle at 52% 95%, rgba(91, 132, 93, 0.45), transparent 28%),
+        radial-gradient(circle at 80% 95%, rgba(81, 118, 81, 0.42), transparent 25%);
+      opacity: 0.88;
+    }
+    .scene-aura {
+      background:
+        radial-gradient(circle at 35% 25%, rgba(255, 247, 200, 0.22), transparent 14%),
+        radial-gradient(circle at 68% 28%, rgba(190, 240, 205, 0.16), transparent 16%);
+    }
+    .scene-mist {
+      background:
+        linear-gradient(180deg, transparent 52%, rgba(247, 241, 217, 0.18) 76%, rgba(247, 241, 217, 0.36) 100%);
+    }
+    .scene-leaves span {
+      position: absolute;
+      width: 18px;
+      height: 10px;
+      border-radius: 14px 14px 14px 0;
+      background: linear-gradient(135deg, #ffe5a2, #8fd49a);
+      opacity: 0.6;
+      animation: drift 11s linear infinite;
+    }
+    .scene-leaves span:nth-child(1) { top: 12%; left: 16%; animation-delay: -1s; }
+    .scene-leaves span:nth-child(2) { top: 22%; left: 73%; animation-delay: -4s; }
+    .scene-leaves span:nth-child(3) { top: 36%; left: 58%; animation-delay: -7s; }
+    .scene-leaves span:nth-child(4) { top: 18%; left: 48%; animation-delay: -2s; }
+    .scene-leaves span:nth-child(5) { top: 48%; left: 82%; animation-delay: -6s; }
+    .scene-leaves span:nth-child(6) { top: 58%; left: 24%; animation-delay: -9s; }
+    @keyframes drift {
+      0% { transform: translate3d(0, 0, 0) rotate(0deg); }
+      50% { transform: translate3d(14px, 18px, 0) rotate(18deg); }
+      100% { transform: translate3d(-8px, 36px, 0) rotate(-8deg); }
+    }
+    .scene-copy {
+      position: relative;
+      z-index: 2;
+      max-width: 470px;
+    }
+    .scene-kicker {
+      display: inline-flex;
+      padding: 10px 18px;
+      border-radius: 999px;
+      background: rgba(175, 211, 154, 0.18);
+      color: #f2dc9c;
+      font-size: 14px;
+      letter-spacing: 0.08em;
+    }
+    .scene-title {
+      margin: 28px 0 18px;
+      font-family: "Ma Shan Zheng", cursive;
+      font-size: clamp(56px, 8vw, 88px);
+      line-height: 0.96;
+      letter-spacing: 0.04em;
+    }
+    .scene-desc {
+      margin: 0;
+      max-width: 430px;
+      line-height: 1.9;
+      color: var(--text-soft);
+      font-size: 18px;
+    }
+    .scene-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 32px;
+    }
+    .scene-stat {
+      padding: 16px 18px;
+      border-radius: 24px;
+      background: rgba(250, 244, 228, 0.08);
+      border: 1px solid rgba(240, 223, 179, 0.18);
+    }
+    .scene-stat span { display: block; color: var(--text-soft); font-size: 13px; margin-bottom: 8px; }
+    .scene-stat strong { font-size: 17px; }
+    .scene-tree {
+      position: absolute;
+      left: 50%;
+      bottom: 72px;
+      width: 320px;
+      height: 380px;
+      transform: translateX(-50%);
+    }
+    .tree-crown {
+      position: absolute;
+      top: 0;
+      left: 40px;
+      width: 240px;
+      height: 200px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 45% 24%, rgba(214, 255, 194, 0.5), rgba(86, 133, 73, 0.92) 58%, rgba(52, 97, 50, 0.96) 100%);
+      box-shadow: 0 26px 60px rgba(16, 34, 14, 0.4);
+    }
+    .tree-crown::before,
+    .tree-crown::after {
+      content: "";
+      position: absolute;
+      width: 92px;
+      height: 92px;
+      background: radial-gradient(circle at 45% 24%, rgba(201, 245, 183, 0.44), rgba(78, 125, 67, 0.96) 68%);
+      border-radius: 50%;
+      top: 26px;
+    }
+    .tree-crown::before { left: -20px; }
+    .tree-crown::after { right: -20px; }
+    .tree-trunk {
+      position: absolute;
+      left: 122px;
+      top: 146px;
+      width: 76px;
+      height: 194px;
+      border-radius: 36px;
+      background: linear-gradient(90deg, #8f552a, #a76b36 55%, #7d4e28);
+      box-shadow: inset 0 0 20px rgba(69, 38, 20, 0.25);
+    }
+    .tree-trunk::after {
+      content: "";
+      position: absolute;
+      inset: 20px auto 20px 34px;
+      width: 8px;
+      border-radius: 8px;
+      background: rgba(255, 214, 146, 0.34);
+    }
+    .tree-ring {
+      position: absolute;
+      left: 90px;
+      top: 230px;
+      width: 140px;
+      height: 38px;
+      border-radius: 999px;
+      border: 2px solid rgba(233, 205, 139, 0.6);
+      box-shadow: 0 0 30px rgba(255, 221, 151, 0.18);
+    }
+    .tree-ring::before,
+    .tree-ring::after {
+      content: "";
+      position: absolute;
+      inset: 8px;
+      border-radius: inherit;
+      border: 1px solid rgba(233, 205, 139, 0.34);
+    }
+    .wood-chip {
+      position: absolute;
+      width: 16px;
+      height: 8px;
+      border-radius: 8px;
+      background: #d8b26b;
+      box-shadow: 0 0 12px rgba(255, 222, 158, 0.2);
+    }
+    .wood-chip--1 { left: 78px; top: 268px; transform: rotate(-8deg); }
+    .wood-chip--2 { right: 74px; top: 286px; transform: rotate(12deg); }
+    .wood-chip--3 { right: 102px; top: 248px; width: 18px; transform: rotate(4deg); }
+    .auth-panel {
+      padding: 30px;
+      background: linear-gradient(180deg, rgba(31, 24, 16, 0.94), rgba(25, 19, 13, 0.96));
+    }
+    .auth-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .brand-seal {
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      border-radius: 18px;
+      color: #f3d89d;
+      background: linear-gradient(135deg, rgba(114, 77, 31, 0.9), rgba(161, 122, 58, 0.8));
+      border: 1px solid rgba(243, 216, 157, 0.24);
+      font-family: "Noto Serif SC", serif;
+      font-size: 26px;
+      font-weight: 700;
+    }
+    .back-link {
+      color: #ecd498;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .panel-frame {
+      padding: 24px;
+      border-radius: 30px;
+      background: rgba(47, 37, 24, 0.86);
+      border: 1px solid rgba(238, 208, 150, 0.16);
+    }
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      padding: 8px;
+      border-radius: 999px;
+      background: rgba(255, 246, 230, 0.08);
+      margin-bottom: 26px;
+    }
+    .auth-tab {
+      border: 0;
+      border-radius: 999px;
+      padding: 16px 18px;
+      background: transparent;
+      color: rgba(246, 234, 208, 0.78);
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .auth-tab.is-active {
+      color: #2b2116;
+      background: linear-gradient(135deg, #f6d48c, #e4b04f);
+      box-shadow: 0 10px 26px rgba(241, 201, 117, 0.2);
+    }
+    .panel { display: none; }
+    .panel.is-active { display: block; }
+    .panel h2 {
+      margin: 0 0 12px;
+      font-family: "Noto Serif SC", serif;
+      font-size: 28px;
+    }
+    .panel p,
+    .auth-note {
+      color: var(--text-soft);
+      line-height: 1.8;
+      font-size: 16px;
+    }
+    form { display: grid; gap: 18px; margin-top: 24px; }
+    label {
+      display: grid;
+      gap: 8px;
+      color: var(--text-soft);
+      font-size: 15px;
+    }
+    input {
+      width: 100%;
+      border: 1px solid var(--input-line);
+      border-radius: 18px;
+      padding: 16px 18px;
+      background: var(--input-bg);
+      color: var(--text-main);
+      font: inherit;
+      outline: none;
+    }
+    input::placeholder { color: rgba(246, 234, 208, 0.45); }
+    .submit-btn {
+      border: 0;
+      border-radius: 18px;
+      padding: 18px 20px;
+      background: linear-gradient(135deg, #efc978, #ca8937);
+      color: #2b2116;
+      font-size: 18px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .helper-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--text-soft);
+      font-size: 14px;
+    }
+    .helper-row a { color: #f0d796; text-decoration: none; }
+    .grid-two {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .auth-note { margin-top: 24px; }
+    .alert { display: none; }
+    .alert.is-visible {
+      display: block;
+      margin-bottom: 18px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      font-weight: 600;
+    }
+    .alert--success { background: rgba(119, 204, 144, 0.16); color: var(--success); }
+    .alert--error { background: rgba(239, 110, 88, 0.16); color: var(--danger); }
+    @media (max-width: 980px) {
+      .auth-shell { grid-template-columns: 1fr; }
+      .auth-scene { min-height: 540px; }
+    }
+    @media (max-width: 720px) {
+      .auth-page { padding: 14px; }
+      .auth-panel, .auth-scene { padding: 22px; }
+      .scene-stats, .grid-two { grid-template-columns: 1fr; }
+      .scene-title { font-size: 56px; }
+      .tree-ring { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-shell">
+      <section class="auth-scene">
+        <div class="scene-mountains" aria-hidden="true"></div>
+        <div class="scene-aura" aria-hidden="true"></div>
+        <div class="scene-leaves" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <div class="scene-copy">
+          <div class="scene-kicker">灵木修行 · 入山问道</div>
+          <h1 class="scene-title">寻道大千<br>灵木问道录</h1>
+          <p class="scene-desc">踏入仙山，执斧问道，劈开灵木积累修为。联盟信息、成员成长、个人修行记录，都从这里启程。</p>
+          <div class="scene-stats">
+            <div class="scene-stat"><span>修行入口</span><strong>登录即入道</strong></div>
+            <div class="scene-stat"><span>灵木成长</span><strong>战力可追踪</strong></div>
+            <div class="scene-stat"><span>宗门协同</span><strong>联盟同修</strong></div>
+          </div>
+        </div>
+        <div class="scene-tree" aria-hidden="true">
+          <div class="tree-crown"></div>
+          <div class="tree-trunk"></div>
+          <div class="tree-ring"></div>
+          <div class="wood-chip wood-chip--1"></div>
+          <div class="wood-chip wood-chip--2"></div>
+          <div class="wood-chip wood-chip--3"></div>
+        </div>
+        <div class="scene-mist" aria-hidden="true"></div>
+      </section>
+
+      <main class="auth-panel">
+        <div class="auth-top">
+          <div class="brand-seal">道</div>
+          <a class="back-link" href="/index.html">返回主站</a>
+        </div>
+        <div class="panel-frame">
+          <div class="auth-tabs">
+            <button type="button" class="auth-tab is-active" data-tab="login">登仙门</button>
+            <button type="button" class="auth-tab" data-tab="register">立新籍</button>
+          </div>
+          <div id="authAlert" class="alert"></div>
+
+          <section class="panel is-active" data-panel="login">
+            <h2>灵台已开，只待归位</h2>
+            <p>管理员与普通用户都从这里进入。登录后即可进入你的修行面板或联盟信息站。</p>
+            <form id="loginForm">
+              <label>道号或灵邮
+                <input id="loginUsername" name="username" type="text" placeholder="输入用户名或邮箱" required>
+              </label>
+              <label>护道秘钥
+                <input id="loginPassword" name="password" type="password" placeholder="输入登录密码" required>
+              </label>
+              <button class="submit-btn" type="submit">踏入仙途</button>
+              <div class="helper-row">
+                <span>一处登录，通行管理员与普通成员</span>
+                <a href="/forgot.html">找回密码</a>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel" data-panel="register">
+            <h2>初立名籍，结缘入道</h2>
+            <p>注册成功后会自动切回登录页。建议用户名与成员昵称一致，方便系统自动关联你的个人档案。</p>
+            <form id="registerForm">
+              <div class="grid-two">
+                <label>修士名号
+                  <input id="registerUsername" name="username" type="text" placeholder="3-20 位用户名" required>
+                </label>
+                <label>常用灵邮
+                  <input id="registerEmail" name="email" type="email" placeholder="输入常用邮箱" required>
+                </label>
+              </div>
+              <div class="grid-two">
+                <label>设置秘钥
+                  <input id="registerPassword" name="password" type="password" placeholder="至少 6 位密码" required>
+                </label>
+                <label>再证秘钥
+                  <input id="registerConfirmPassword" name="confirmPassword" type="password" placeholder="再次输入密码" required>
+                </label>
+              </div>
+              <button class="submit-btn" type="submit">登记名籍</button>
+            </form>
+          </section>
+
+          <div class="auth-note">如果你是普通成员，建议注册时直接使用与成员昵称一致的用户名。这样登录后，系统会更容易自动关联到你的个人资料页面。</div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const tabs = [...document.querySelectorAll(".auth-tab")];
+    const panels = [...document.querySelectorAll(".panel")];
+    const alertBox = document.querySelector("#authAlert");
+    const loginForm = document.querySelector("#loginForm");
+    const registerForm = document.querySelector("#registerForm");
+
+    function switchTab(tab) {
+      tabs.forEach((item) => item.classList.toggle("is-active", item.dataset.tab === tab));
+      panels.forEach((panel) => panel.classList.toggle("is-active", panel.dataset.panel === tab));
+      hideAlert();
+    }
+
+    function showAlert(type, message) {
+      alertBox.className = `alert is-visible alert--${type}`;
+      alertBox.textContent = message;
+    }
+
+    function hideAlert() {
+      alertBox.className = "alert";
+      alertBox.textContent = "";
+    }
+
+    async function request(url, options = {}) {
+      const response = await fetch(url, {
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        ...options,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "请求失败");
+      return data;
+    }
+
+    const initialTab = new URLSearchParams(window.location.search).get("tab");
+    if (initialTab === "login" || initialTab === "register") switchTab(initialTab);
+    tabs.forEach((tab) => tab.addEventListener("click", () => switchTab(tab.dataset.tab)));
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      hideAlert();
+      try {
+        const result = await request("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            username: document.querySelector("#loginUsername").value.trim(),
+            password: document.querySelector("#loginPassword").value.trim(),
+          }),
+        });
+        localStorage.setItem("alliance_user", JSON.stringify({
+          ...(result.user || {}),
+          is_admin: Boolean(result.is_admin),
+          loginTime: Date.now(),
+        }));
+        showAlert("success", result.message || "登录成功，正在进入仙途...");
+        window.setTimeout(() => {
+          window.location.href = "/index.html";
+        }, 800);
+      } catch (error) {
+        showAlert("error", error.message);
+      }
+    });
+
+    registerForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      hideAlert();
+      try {
+        const result = await request("/api/auth/register", {
+          method: "POST",
+          body: JSON.stringify({
+            username: document.querySelector("#registerUsername").value.trim(),
+            email: document.querySelector("#registerEmail").value.trim(),
+            password: document.querySelector("#registerPassword").value.trim(),
+            confirmPassword: document.querySelector("#registerConfirmPassword").value.trim(),
+          }),
+        });
+        showAlert("success", `${result.message || "注册成功"}，请使用新账号登录`);
+        registerForm.reset();
+        switchTab("login");
+        document.querySelector("#loginUsername").value = result.username || "";
+      } catch (error) {
+        showAlert("error", error.message);
+      }
+    });
+  </script>
+</body>

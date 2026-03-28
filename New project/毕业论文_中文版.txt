@@ -1,0 +1,206 @@
+知识图谱引导的检索增强生成
+
+朱向荣    谢月祥    刘毅    李亚亮    胡伟
+
+摘要
+
+大语言模型在生成回复时容易产生幻觉，检索增强生成被认为是缓解这一问题的有效途径。然而，当前多数RAG工作侧重于通过语义相似度检索彼此孤立的文本块，但是较少关注文本块间潜在的事实关联。针对这一不足，本文设计了一种知识图谱引导的检索增强生成框架，借助知识图谱刻画文本块之间的事实级关系，改善检索结果在多样性与连贯性上的表现。该框架的核心流程如下：先通过语义检索获取若干种子文本块，随后依托知识图谱对文本块进行扩展与组织，最终以结构化段落的形式向大语言模型提供关键知识。我们在HotpotQA数据集及其衍生变体上开展了系统实验，结果显示，无论是回复质量还是检索质量，该框架均较已有RAG方法取得了明显提升。
+
+1 引言
+
+大语言模型近年来在问答、写作辅助、代码生成等多类任务上展现出很强的能力。但是仍然存在弊端，幻觉问题始终困扰着实际应用——模型有时会生成过时的、甚至凭空杜撰的内容，这可能是因为训练数据的时效性不足或缺少特定领域的知识储备。检索增强生成正是在这样的背景下大受欢迎：它从给定文档中抽取与查询相关的知识片段，将其嵌入提示中供模型参考，以此降低幻觉发生的概率。
+
+已有的RAG方法大多遵循图1所示的流程，依据关键词匹配或者向量语义相似度，从文档库中选取与用户查询最为接近的文本块。但这种做法存在两方面的局限：一是高相似度的文本块之间内容大概率高度重叠，所能覆盖的信息面比较有限，文本块彼此之间的事实关联也没有被显式建模，这就加大了模型的多步推理的难度；其二，检索到的文本块通常只是按相似度分数由高到低简单拼接后直接输入模型，由此带来的信息碎片化问题会削弱模型生成完整、可靠回复的能力。
+
+知识图谱以三元组（头实体、关系、尾实体）的形式对现实世界的实体及其关联进行结构化表达，不同三元组通过共享实体天然地串联在一起。这种结构特性使其有潜力弥补纯语义检索的不足——将分散在不同文本块中的事实知识结合起来，为模型提供更完整的推理依据。图1给出了一个简化示例，展示了如何借助知识图谱中的相关三元组来丰富检索上下文，使模型获得那些仅靠语义匹配很容易被遗漏的关键事实。
+
+基于这个思路，本文提出了知识图谱引导的检索增强生成框架。在初始离线阶段，我们对文档进行分块处理，并建立文本块与知识图谱之间的映射关系，从而使文本块间的事实级关系得以显式表示出来。在线检索阶段，框架分两步完成文本块的获取：第一步是语义检索，利用嵌入模型与排序技术筛选出一组种子文本块；然后是图引导扩展，从种子文本块出发，在关联知识图谱上提取相关子图，通过图遍历将那些包含重叠实体或相关三元组的文本块纳入检索结果。这一扩展机制的目的在于突破语义检索的同质性限制，构建覆盖面更广的知识网络。
+
+检索完成后，框架还引入了一个后处理环节——基于知识图谱的上下文组织。该环节承担双重功能：一方面作为过滤器，依据子图的结构筛除冗余信息，只保留与查询最为相关的内容；另一方面作为组织器，以知识图谱的拓扑结构为骨架，将零散的文本块编排为语义上前后衔接的段落。经过组织后的文本块与用户查询一同送入大语言模型，用于生成最终回复。
+
+实验部分，我们选择了被广泛采用的HotpotQA数据集，同时构建了若干新的变体数据集以减弱模型先验知识的干扰。在干扰项设置与完整维基设置两种条件下，我们将框架与多种RAG基线方法进行了对比，结果表明在回复质量和检索质量上均表现更优。我们还通过消融实验逐一验证了框架中各模块的贡献。相关数据集与源代码已开源。
+
+2 方法论
+
+该框架的整体工作流程如图2所示。下文将沿着这一流程展开介绍，依次涵盖离线文档处理（第2.1节）、知识图谱增强的文本块检索（第2.2节）以及基于知识图谱的上下文组织（第2.3节）。
+
+2.1 文档离线处理
+
+与已有RAG工作的做法一致，我们首先依据句子边界、段落结构以及预设的块大小，将全部文档切分为n个文本块，记作D = {c₁, …, cₙ}。在此基础上，还可以对文本块做进一步的增强处理，例如补充上下文信息、抽取标题或摘要等元信息，或为每个文本块自动生成对应的问题。由于这些增强手段与本文方法相互独立、可自由组合，此处不再展开，感兴趣的读者可参阅相应的原始文献。为简化符号，后续仍将处理后的文本块集合记为D = {c₁, …, cₙ}。
+
+为了让文本块之间的事实级关系能被显式捕获，我们需要将它们与一个知识图谱进行关联。实现这种关联有两条路径。当已有现成的知识图谱可供使用时，可以运用实体识别与链接算法把文本块中提及的实体和关系映射到图谱上。而在没有现成图谱的情况下，则可以直接从文本块中抽取实体与关系构成局部子图，再将各子图拼合为一张完整的知识图谱。本文采用的是后一种方案——通过设计合适的提示词，让大语言模型完成从文本到三元组的抽取工作，从而避免对外部知识图谱的依赖。
+
+经过上述处理后，我们得到了文本块与知识图谱之间的关联关系，形式化表示为：G = {(h, r, t, c) | c ∈ D}。其中h、r、t分别对应三元组的头实体、关系和尾实体，c标记了该三元组的来源文本块。需要指出的是，整个关联过程不依赖于用户查询，因此可以在离线阶段一次性完成，后续有新文档加入时我们增量更新就行。
+
+也正因为文档离线处理的流程与传统RAG保持一致，该框架天然地支持对知识库和知识图谱的动态增删——无论是添加新文档还是移除旧文档，都不需要对整个框架进行重构。
+
+2.2 知识图谱增强的文本块检索
+
+在文本块集合D和关联知识图谱G的基础上，框架通过两个阶段完成检索：先进行语义检索，再进行图引导扩展。
+
+基于语义的检索
+
+语义检索的思路比较直接。给定用户查询q，我们计算它与每个文本块之间的语义相似度：S = {s(q, c) | c ∈ D}。这里的相似度函数s(·)先利用嵌入模型分别将查询和文本块映射到高维向量空间，再计算两者的余弦相似度。
+
+我们按相似度由高到低取前k个文本块，构成初始检索集合Dq。如果按照常规RAG的做法，这些文本块会直接拼入提示送给大语言模型生成回复。但我们在第1节已经分析过，单纯依靠语义相似度筛选出的文本块容易彼此孤立，之间缺乏事实层面的串联，一些对回答问题至关重要的知识也可能因为与查询的表面相似度不够高而被遗漏。为此，我们将Dq中的文本块视为"种子"，在其基础上通过图引导扩展来补充更多相关内容。
+
+图引导扩展
+
+在交流和思考过程中，人们经常将一个事件与涉及相同实体（如人物和地点）的其他事件联系起来。参考这个例子，框架建议通过文本块中包含的重叠或连接实体将一个文本块与其他文本块链接，以进行检索文本块扩展。
+
+具体而言，给定检索到的文本块Dq ⊆ D和知识图谱G = {(h, r, t, c) | c ∈ D}，我们首先按如下方式获取Dq的相关子图：Gq⁰ = {(h, r, t, c) | c ∈ Dq} ⊆ G。
+
+之后，我们遍历Gq⁰的m跳邻域以获取扩展子图Gqᵐ，可以表示为Gqᵐ = traverse(G, Gq⁰, m)，其中traverse(·)可以使用广度优先搜索算法实现，作为一个函数，捕获Gq⁰中的所有实体、相应的m跳相邻实体，以及连接这些实体形成扩展子图的所有边。
+
+给定扩展子图Gqᵐ，我们可以读出与该图关联的所有文本块（即包含与此图中三元组对应事实的文本块），如下所示：Dqᵐ = {c | (h, r, t, c) ∈ Gqᵐ} ⊆ D，其中Dqᵐ称为扩展文本块。
+
+讨论
+
+几种基于语义和基于上下文的方法也可以实现文本块扩展。例如，可以增加相似度检索过程中k的值，或者应用上下文窗口扩展。跟这些方法不同，提出的图引导扩展收集包含相同或相关实体或三元组的文本块，无需这些扩展文本块与查询具有高语义相似度或位于检索文本块附近。这种图引导扩展的设计有助于防止检索和扩展文本块之间的冗余和过度同质化，从而带来更大的多样性并形成更全面的知识网络。
+
+2.3 基于知识图谱的上下文组织
+
+在知识图谱增强的文本块检索之后，框架在大语言模型回复生成之前加入了一个后处理阶段，主要是做两个考虑。
+
+首先，通过图引导扩展的扩展文本块数量与扩展子图中包含的三元组相关，这可能太大，可能超出上下文长度并引入可能掩盖有用信息的噪声。其次，参考人类阅读习惯和先前研究，将语义连贯且组织良好的材料作为上下文对大语言模型的理解和生成性能产生积极影响。因此，框架中提出了一个基于知识图谱的上下文组织模块，它可以充当过滤器和组织器以满足这些要求。
+
+充当过滤器
+
+具体而言，我们首先计算扩展文本块与用户查询之间的语义相似度。基于这些相似度，扩展子图Gqᵐ可以转换为一个无向加权图：Uqᵐ = {(h ↔ t, rel: r, src: c, weight: s(q,c)) | (h, r, t, c) ∈ Gqᵐ}，其中h ↔ t表示一条无向边，附加相应的关系和源文本块作为元信息。我们重用之前计算的语义相似度以节省计算资源。
+
+由于知识的内聚性，Uqᵐ自然可以分为p个连通分量，记为Bi，1 ≤ i ≤ p，其中每个连通分量Bi内的节点代表来自知识图谱的实体。请注意，由于冗余知识，多条边可能连接一对节点，这促使我们生成每个连通分量的最大生成树用于过滤。这可以表述为Ti = MST(Bi)。
+
+通过这种过滤过程，我们只保留实体之间最相关的链接信息并消除冗余边，从而增强检索文本块的信息量。
+
+充当组织器
+
+借助基于知识图谱的上下文组织模块，我们的目标是以知识图谱为骨架将检索到的文本块整合成内在相关且不能互相冲突的段落。
+
+为此，我们为每个生成的最大生成树Ti提供两种表示，包括文本表示和三元组表示。对于文本表示，我们选择权重最高的边作为根，并使用深度优先搜索算法连接链接到边的所有文本块以形成连贯的段落。对于三元组表示，我们以<h, r,="" t="">的形式连接最大生成树中所有边。
+
+我们基于它们的三元组表示，使用交叉编码器重排序函数计算最大生成树与用户查询之间的相关性分数：R(q, Ti) = C(q, conc(Ti))，其中C(·)是交叉编码器重排序函数，conc(·)用于获取三元组表示。我们使用三元组表示而不是文本表示，因为三元组提供了与相应文本块关联的关键信息的简洁且结构化的提炼，使相关性匹配能够更关注关键信息。
+
+计算相关性分数后，我们根据它们与用户查询q的相关性按降序对最大生成树进行排序。然后，我们按顺序包含它们的三元组表示，直到达到top‑k约束。最后，这些选定的文本块与用户查询一起输入大语言模型中进行回复生成。
+
+3 实验
+
+3.1 实验设置
+
+数据集
+
+本文选用多跳问答领域的经典基准数据集HotpotQA开展实验。该数据集中每个查询都可能涉及多篇支撑材料，比如维基百科中的相关段落，用于辅助生成回复。HotpotQA提供了两种不同的实验设置：干扰项设置和完整维基设置。前者给每个查询提供十篇文档当做候选，其中混杂了有用知识和部分无关内容；后者则要求模型从维基百科中提取的全部文档里筛选出真正有价值的知识片段，难度显然更大。
+
+在知识图谱与文本块的关联构建方面，我们借助大语言模型，配合人工设计的提示模板，从HotpotQA的文档中抽取实体与关系。最终得到的知识图谱包含若干个实体、若干种关系，共计若干个三元组，且每个三元组均保留了指向其来源文本块的链接。我们统计了各文本块和文档中被抽取的三元组数量，并将其分布情况绘制于图中，可以看出该分布呈现出明显的长尾特征。
+
+此外，考虑到大语言模型的训练语料中很可能已经包含了维基百科的内容，模型在回答问题时可能会"凭记忆"作答，而非真正依赖检索结果。为了削弱这种先验知识的干扰，更客观地评估RAG的实际效果，我们进一步构建了HotpotQA的变体版本。做法是：对数据集中的每个实体，随机用同一类别下的另一个实体进行替换，同时对查询文本、知识图谱三元组和源文档做同步更新。具体展开来说，实体"Family Guy"可能被替换为"Rick and Morty"，那么查询、三元组及文档中出现的所有"Family Guy"都会被相应修改。这样，模型就无法再利用训练阶段积累的关于"Family Guy"的背景知识，必须真实从文档中定位和抽取相关信息才能给出正确回答。不得不提的是，这一替换过程可能会产生大量新的三元组。经过上述处理得到的变体数据集分别命名为Shuffle‑HotpotQA‑Dist和Shuffle‑HotpotQA‑Full。
+
+评估指标
+
+我们从回复质量和检索质量两个维度对框架与各基线方法进行比较。检索质量方面，采用HotpotQA官方提供的评估脚本，计算检索到的文本块与参考事实之间的F1分数、精确率和召回率。回复质量方面，同样以F1分数、精确率和召回率来衡量生成回复与标准答案之间的匹配程度。
+
+基线方法
+
+实验中用于对比的基线方法如下：
+
+仅LLM：不引入任何外部检索机制，直接让大语言模型根据查询生成回复，作为不使用RAG时的性能参照。
+
+语义RAG：通过语义相似度检索相关文本块，将其拼接后嵌入提示中供大语言模型生成回复。
+
+混合RAG：在语义检索的基础上融合了BM25等关键词匹配方法。两路检索的结果通过交叉编码器重排序器进行融合排序。
+
+GraphRAG：利用大语言模型从源文档中构建知识图谱，并对图谱中的聚类实体预先生成社区摘要。面对用户查询时，系统先基于各相关社区摘要分别生成局部回复，再将其汇总为最终答案。
+
+LightRAG：可以简单理解成GraphRAG的轻量化方案。它同样从源文档中提取实体与关系，但为每个实体生成简短描述来支持检索，检索到的信息与查询拼接后一起输入大语言模型进行生成。
+
+在具体实现上，所有方法都使用相同的大语言模型完成知识图谱构建和回复生成任务，嵌入模型为mxbai‑embed‑large，交叉编码器重排序器为bge‑reranker‑large。如无特别说明，top‑k的取值统一设为10。
+
+3.2 比较与分析
+
+回复质量
+
+表1汇总了框架与各基线方法在回复质量上的对比结果。一个直观的发现是，所有采用RAG策略的方法都大幅超越了仅LLM的方案——在原始HotpotQA上F1提升幅度超过29.1%，在Shuffle‑HotpotQA上也超过了26.4%，这就印证了检索增强生成的必要性。
+
+在各RAG方法之间的横向比较中，框架表现出稳定的领先优势，尤其在完整维基设置和Shuffle‑HotpotQA数据集上更为突出。完整维基设置下，候选文档的规模比干扰项设置大出数千倍，对检索精度和上下文组织都提出了更高要求。在这一高难度场景中，框架相较于最优基线至少取得了8%的F1提升，说明知识图谱引导的检索策略确实能在大规模文档库中更有效地定位关键信息，表现优于单纯依赖语义或关键词的检索方式。而在Shuffle‑HotpotQA上——模型无法依赖先验知识，必须真正"读懂"文档——框架在干扰项和完整维基两种设置下分别实现了至少2.5%和6.4%的提升，进一步验证了方法本身的有效性。
+
+检索质量
+
+表2展示了各方法的检索质量对比。总体而言，框架在精确率和召回率之间达到了较好的平衡效果。具体来看，在干扰项设置中，由于不相关文本块本身数量有限，各方法的召回率差距不大，但框架的精确率明显更高——在HotpotQA和Shuffle‑HotpotQA上分别领先最优基线7.9%和6.9%以上。而在完整维基设置中，从海量文档里找到相关文本块本身就困难许多，框架在精确率和召回率上都取得了持续性的改善。这些数据从检索层面佐证了知识图谱引导扩展与上下文组织机制的实际价值。
+
+3.3 进一步讨论
+
+消融研究
+
+为了厘清框架各模块的具体贡献，我们分别移除知识图谱引导扩展模块和基于知识图谱的上下文组织模块，在干扰项设置下对HotpotQA和Shuffle‑HotpotQA进行消融实验。结果见表3和表4，其中还列出了各配置下检索到的文本块平均数量。
+
+当只保留知识图谱引导扩展并去掉上下文组织模块时，回复质量与完整模型相当，但检索质量出现了明显下滑。深入分析可以发现，缺少上下文组织模块后，被纳入上下文的文本块数量大幅增加，其中混入了不少与查询关系不大的内容——这些冗余信息不仅没有帮助回答问题，反而白白占用了宝贵的上下文窗口。这一结果说明，上下文组织模块在筛选和精简检索结果、保留真正有用信息方面发挥了关键作用。
+
+反过来，当仅使用上下文组织模块而去掉知识图谱引导扩展时，检索精确率和F1分数都比较高，使用的文本块数量也明显更少，但回复质量并没有得到改善。这是因为仅靠语义相似度有时并不足以检索到回答多跳问题所必需的全部文本块——某些间接相关但不可或缺的信息片段容易被遗漏。这恰恰体现了知识图谱引导扩展的价值：它能够利用图谱结构捕捉文本块之间的事实层面关联，将纯语义方法可能忽略的关键信息拉进检索结果中。
+
+随k变化的性能
+
+我们在HotpotQA干扰项设置下测试了不同top‑k取值对各方法的影响，结果绘制于图5中。可以看到，框架在各个k值下都保持了对基线方法的优势。当k取较为适中的值（如5或10）时，框架能够高效地检索到高质量文本块，为回复生成提供连贯且信息充分的上下文。
+
+不过，当k被设得过大（如15）时，虽然检索召回率有了显著提升，回复质量的提升却很有限，这说明一味堆积更多文本块并不必然带来更好的效果——多出来的内容里可能噪声居多。值得一提的是，与其他方法相比，框架对k这一超参数的敏感性是最低的，这就使整个RAG流程具备了更好的鲁棒性。
+
+随m变化的性能
+
+超参数m控制的是知识图谱上的扩展跳数，本质上是在检索精确率和召回率之间做取舍。前文所有实验中m均设为1。为了考察不同跳数的影响，我们在HotpotQA数据集上进行了额外实验，结果列于表5。数据表明，m = 1对于当前实验场景已经足够，同时框架对m的取值变化也并不敏感。
+
+鲁棒性分析
+
+实际应用中，自动构建的知识图谱难免存在噪声或缺失。为了验证框架在知识图谱质量受限情况下的稳健程度，我们从已构建的知识图谱中随机删除5%和10%的三元组，然后重新运行实验。表6的结果显示，即便图谱信息有所残缺，框架的性能波动很小，依然稳定地优于各基线方法，说明该方法对知识图谱的质量具备较好的容错能力。
+
+4 相关工作
+
+检索增强生成
+
+大语言模型在生成过程中容易因知识缺失或知识过时而产生幻觉。为缓解这一问题，检索增强生成被引入，其核心思路是从候选文档池中检索与查询相关的文本块，将其作为上下文提供给大语言模型，帮助模型生成更可靠的回答。
+
+在典型的RAG流程中，文档首先依据长度与结构被切分为若干文本块，随后借助嵌入模型对各文本块进行编码与索引，以支持高效的向量检索。句子窗口检索借鉴了滑动窗口的思路，在获取目标文本块的同时抓取其前后相邻的文本块，拼接为一个更长的片段来补充上下文信息。不过，这种做法只关注同一文档内文本块在物理位置上的相邻关系。相比之下，本框架的检索扩展建立在文本块之间的事实关联之上，这种关联可以跨越不同文档的边界。
+
+重排序在信息检索领域有着长期的研究积累。在RAG场景下，一种常见的做法是将检索得到的文本块与查询共同输入基于深度学习的交叉编码器，利用交叉注意力机制对语义相关性进行更精细的度量，进而提升检索与生成的整体效果。本框架在此基础上进一步引入知识图谱作为组织骨架，将检索到的文本块编排为段落，使得重排序能够在段落层面捕捉更细粒度的相关性信号。
+
+知识图谱增强的大语言模型
+
+大语言模型是当前人工智能领域最具影响力的技术产物之一。知识图谱以图结构组织实体与关系，长期以来就是人工智能应用中不可或缺的数据基础设施。已有研究显示，大语言模型在处理知识图谱相关任务方面展现出相当的潜力，包括知识图谱补全和知识图谱问答等。
+
+近年来，学界逐渐将关注点转向另一个方向：如何借助知识图谱来提升大语言模型的生成能力。KGP是其中一项代表性工作，它构建了一种由页面节点和段落节点组成的文档知识图谱，段落节点之间的连接依赖TF‑IDF计算的文本相似度，并据此进行检索扩展。但由于其图谱建立在句子级文本相似性的基础上，功能上与简单的上下文窗口扩展并无本质区别。GraphRAG则面向以查询为中心的摘要任务，利用大语言模型自动从文档库中抽取知识图谱，并在查询前对数据集的语义结构进行预分析——具体而言，通过在不同层级上对知识图谱进行切分并逐层检测相互关联的节点。跟上述工作不同，本框架着眼于知识图谱所蕴含的事实级结构与事实知识，将其系统地融入RAG流程以增强生成质量。
+
+5 结论
+
+本文提出了一个框架，其核心思路是将知识图谱引入RAG流程，以提升检索增强生成的整体效果。具体而言，我们在文本块与知识图谱实体之间建立了显式链接，使得不同文本块之间的事实级语义关系得以被捕捉和利用。在此基础上，框架以语义检索得到的种子文本块为起点，沿知识图谱的结构进行文本块扩展，并借助图谱信息对检索上下文加以组织和排列。经过上述处理，最终送入大语言模型的上下文不仅覆盖面更广，而且各文本块之间具备更强的内在关联性与一致性，从而有利于生成高质量的回复。实验结果表明，与已有的RAG方法相比，框架在回复质量和检索质量两方面均取得了更优的表现。此外，消融实验也验证了知识图谱引导的文本块扩展与基于知识图谱的上下文组织这两个模块各自的贡献——二者的协同配合是框架有效性的重要来源。
+
+致谢
+
+本研究受国家自然科学基金资助。
+
+局限性
+
+检索增强生成本身是一个系统性工程，其性能可以从查询重写、检索优化、多轮对话等多个环节加以改进。本文所提出的框架聚焦于检索优化这一环节，通过知识图谱引导的检索扩展和上下文组织，将结构化的事实知识融入RAG流程，而未对其余环节做专门优化。不过需要指出的是，框架在设计上与上述其他模块并不冲突，具有较好的兼容性。后续工作中，我们计划将框架封装为即插即用的工具模块，以便其能够便捷地与其他优化方法组合使用，希望为相关研究社区提供更大的实用价值。
+
+参考文献
+Nicholas Ampazis. 2024. Improving RAG quality for large language models with topic‑enhanced reranking. In AIAI, volume 712, pages 74–87, Corfu, Greece. Springer.
+
+Arian Askari, Amin Abolghasemi, Gabriella Pasi, Wessel Kraaij, and Suzan Verberne. 2023. Injecting the BM25 score as text improves BERT‑based re‑rankers. CoRR.
+
+Sören Auer, Christian Bizer, Georgi Kobilarov, Jens Lehmann, Richard Cyganiak, and Zachary G. Ives. 2007. DBpedia: A nucleus for a web of open data. In ISWC, volume 4825, pages 722–735, Busan, Korea. Springer.
+
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert‑Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. 2020. Language models are few‑shot learners. In NeurIPS, Virtual. Curran Associates.
+
+Marco Calamo, Francesca De Luzi, Mattia Macrì, Tommaso Mencattini, and Massimo Mecella. 2023. CERO: A GPT2‑based writing assistant to investigate the effectiveness of specialized LLMs’ applications in e‑justice. In ECAI, volume 372, pages 3196–3203, Kraków, Poland. IOS.
+
+Wei Cheng, Yuhan Wu, and Wei Hu. 2024. Dataflow‑guided retrieval augmentation for repository‑level code completion. In ACL, pages 7957–7977, Bangkok, Thailand. ACL.
+
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al‑Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, Anirudh Goyal, Anthony Hartshorn, Aobo Yang, Archi Mitra, Archie Sravankumar, Artem Korenev, Arthur Hinsvark, Arun Rao, Aston Zhang, Aurélien Rodriguez, Austen Gregerson, Ava Spataru, Baptiste Rizoire, Bethany Biron, Binh Tang, Bobbie Chern, Charlotte Caucheteux, Chaya Nayak, Chloe Bi, Chris Marra, Chris McConnell, Christian Keller, Christophe Touret, Chunyang Wu, Corinne Wong, Cristian Canton Ferrer, Cyrus Nikolaidis, Damien Allonsius, Daniel Song, Danielle Pintz, Danny Livshits, David Esio, Dhruv Choudhary, Dhruv Mahajan, Diego Garcia‑Olano, Diego Perino, Dieuwke Hupkes, Egor Lakomkin, Ehab AlBadawy, Elina Lobanova, Emily Dinan, Eric Michael Smith, Filip Radenovic, Frank Zhang, Gabriel Synnaeve, Gabrielle Lee, Georgia Lewis Anderson, Graeme Nail, Grégoire Mialon, Guan Pang, Guillem Cucurell, Hailey Nguyen, Hannah Korevaar, Hu Xu, Hugo Touvron, Ilyan Zarov, Imanol Arrieta Ibarra, Isabel M. Kloumann, Ishan Misra, Ivan Evtimov, Jade Copet, Jaewon Lee, Jan Geffert, Jana Vranes, Jason Park, Jay Mahadeokar, Jeet Shah, Jelmer van der Linde, Jennifer Billock, Jenny Hong, Jenya Lee, Jeremy Fu, Jianfeng Chi, Jianyu Huang, Jiawen Liu, Jie Wang, Jiecao Yu, Joanna Bitton, Joe Spisak, Jongsoo Park, Joseph Rocca, Joshua Johnston, Joshua Saxe, Junteng Jia, Kalyan Vasuden Alwala, Kartikeya Upasani, Kate Plawiak, Ke Li, Kenneth Heafield, Kevin Stone, and et al. 2024. The Llama 3 herd of models. CoRR.
+
+Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt, and Jonathan Larson. 2024. From local to global: A graph RAG approach to query‑focused summarization. CoRR.
+
+Matous Eibich, Shivay Nagpal, and Alexander Fred‑Ojala. 2024. ARAGOG: Advanced RAG output grading. CoRR.
+
+Wenqi Fan, Jujuan Ding, Liangbo Ning, Shijie Wang, Hengyun Li, Dawei Yin, Tat‑Seng Chua, and Qing Li. 2024. A survey on RAG meeting LLMs: Towards retrieval‑augmented large language models. In KDD, pages 6491–6501, Barcelona, Spain. ACM.
+
+Luyu Gao, Zhuyun Dai, Tongfei Chen, Zhen Fan, Benjamin Van Durme, and Jamie Callan. 2021. Complement lexical retrieval model with semantic residual embeddings. In ECIR, volume 12656, pages 146–160, Glasgow, UK. Springer.
+
+Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Qianyu Guo, Meng Wang, and Haofen Wang. 2023. Retrieval‑augmented generation for large language models: A survey. CoRR.
+
+Michael R. Glass, Gaetano Rossiello, Md. Faisal Mahbub Chowdhury, Ankita Naik, Pengshan Cai, and Alfio Gliozzo. 2022. Re2G: Retrieve, rerank, generate. In NAACL, pages 2701–2715, Seattle, WA, USA. ACL.

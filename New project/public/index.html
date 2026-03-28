@@ -3,27 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>寻道大千联盟信息板</title>
+  <title>寻道大千联盟信息站</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
-  <!-- 全局认证检查脚本 -->
-  <script src="/auth-check.js"></script>
 </head>
 <body>
   <div class="board-page">
     <header class="board-top">
       <div class="board-top__brand">
-        <p class="board-eyebrow">XUNDAO DQ · ALLIANCE BOARD</p>
-        <h1 id="allianceName">青云联盟</h1>
-      </div>
-      <div class="board-top__actions">
-        <span id="userInfo" class="user-info hidden">
-          <span class="user-username"></span>
-          <button id="logoutBtn" type="button" class="logout-btn">退出</button>
-        </span>
-        <a href="login.html" id="loginLink" class="login-link">登录</a>
+        <p class="board-eyebrow">XUNDAO DQ ALLIANCE BOARD</p>
+        <h1 id="allianceName">🔮联盟</h1>
       </div>
       <div class="board-top__stats">
         <span id="memberCount">0 名成员</span>
@@ -33,11 +24,12 @@
     </header>
 
     <nav class="top-pills">
-      <button class="top-pills__btn is-active" data-view="guilds">🪭 妖盟总览</button>
-      <button class="top-pills__btn" data-view="ranking">🏆 排行榜</button>
-      <button class="top-pills__btn" data-view="guildAdmin">＋ 录入新妖盟</button>
-      <button class="top-pills__btn" data-view="melon">🍉 瓜棚</button>
-      <button class="top-pills__btn" data-view="announcementAdmin">📣 发布动态</button>
+      <button class="top-pills__btn is-active" data-view="guilds">妖盟总览</button>
+      <button class="top-pills__btn" data-view="ranking">排行榜</button>
+      <button class="top-pills__btn" data-view="guildAdmin">妖盟管理</button>
+      <button class="top-pills__btn" data-view="melon">瓜棚</button>
+      <button class="top-pills__btn" data-view="announcementAdmin">内容发布</button>
+      <button class="top-pills__btn" data-view="login">用户登录</button>
     </nav>
 
     <main class="board-layout">
@@ -45,7 +37,7 @@
         <section class="side-filter__panel side-filter__panel--search">
           <div class="side-filter__search-row">
             <input id="searchInput" type="search" placeholder="搜索联盟或妖盟...">
-            <button type="button" class="side-filter__search-btn" id="searchBtn">🔍</button>
+            <button type="button" class="side-filter__search-btn" id="searchBtn">搜</button>
           </div>
           <div class="side-filter__action-row">
             <select id="guildFilter">
@@ -56,7 +48,7 @@
         </section>
 
         <section class="side-filter__panel side-filter__panel--meta">
-          <p><span>当前联盟:</span><strong id="currentHillLabel">全部</strong></p>
+          <p><span>当前联盟:</span><strong id="currentHillLabel">全部联盟</strong></p>
           <p><span>联盟妖盟数:</span><strong id="currentGuildCount">0</strong></p>
         </section>
 
@@ -72,16 +64,16 @@
           <article class="panel-card">
             <div class="panel-card__head panel-card__head--detail">
               <div class="detail-title-group">
-                <button type="button" id="guildDetailBack" class="detail-back-btn">← 返回总览</button>
+                <button type="button" id="guildDetailBack" class="detail-back-btn">返回总览</button>
                 <h2 id="guildDetailTitle">妖盟详情</h2>
-                <p id="guildDetailMeta" class="detail-meta"></p>
+                <p id="guildDetailMeta" class="detail-meta">点击妖盟卡片可查看完整成员信息。</p>
               </div>
               <div id="guildDetailActions" class="panel-toolbar"></div>
             </div>
             <div class="detail-filter-bar">
               <input id="guildDetailSearch" type="search" placeholder="搜索成员昵称、境界、备注">
               <select id="guildDetailRoleFilter">
-                <option value="all">全部职位</option>
+                <option value="all">全部等级</option>
               </select>
             </div>
             <div id="guildDetailList" class="detail-member-list"></div>
@@ -91,7 +83,7 @@
         <section class="board-panel" data-panel="ranking">
           <article class="panel-card">
             <div class="panel-card__head">
-              <h2>🏆 联盟排行榜</h2>
+              <h2>联盟排行榜</h2>
               <div class="panel-toolbar">
                 <select id="rankingGuildFilter">
                   <option value="all">全部妖盟</option>
@@ -99,7 +91,7 @@
                 <select id="sortSelect">
                   <option value="power-desc">战力从高到低</option>
                   <option value="power-asc">战力从低到高</option>
-                  <option value="name-asc">按昵称排序</option>
+                  <option value="name-asc">按名称排序</option>
                 </select>
               </div>
             </div>
@@ -107,141 +99,208 @@
           </article>
         </section>
 
-        <section class="board-panel" data-panel="announcements">
-          <article class="panel-card">
-            <div class="panel-card__head">
-              <h2>📣 联盟公告</h2>
-            </div>
-            <div id="announcementList" class="feed-list"></div>
-          </article>
-        </section>
-
         <section class="board-panel" data-panel="melon">
           <article class="panel-card">
             <div class="panel-card__head">
-              <h2>🍉 联盟瓜棚</h2>
+              <h2>瓜棚</h2>
             </div>
             <div id="melonList" class="feed-list"></div>
           </article>
         </section>
 
-        <section class="board-panel" data-panel="guildAdmin">
+        <section class="board-panel" data-panel="login">
           <article class="panel-card">
             <div class="panel-card__head">
-              <h2>＋ 录入新妖盟</h2>
+              <h2>用户登录</h2>
+              <span id="loginState" class="login-state">未登录</span>
             </div>
-
-            <div class="admin-gate" id="guildAdminGate">
-              <p>请先登录管理员账号，再使用录入和管理功能。</p>
-            </div>
-
-            <div class="admin-layout hidden" id="guildAdminLayout">
-              <section class="admin-card admin-card--full">
-                <div class="admin-card__head">
-                  <h3 id="memberFormTitle">录入新妖盟</h3>
-                  <button type="button" class="ghost-btn" id="resetMemberBtn">清空表单</button>
-                </div>
-                <p id="memberFormHint" class="form-hint">新增妖盟时填写完整信息；编辑妖盟时只修改妖盟名称和盟主昵称。</p>
-                <form id="memberForm" class="member-form">
-                  <input type="hidden" id="memberId">
-                  <label>联盟名称<input id="memberAlliance" type="text" required></label>
-                  <label>妖盟编号<input id="memberGuildCode" type="text" placeholder="如 833"></label>
-                  <label>山名字号<input id="memberGuildPrefix" type="text" placeholder="如 长虹山"></label>
-                  <label>妖盟总战力<input id="memberGuildPower" type="number" min="0" placeholder="可手动填写总战力"></label>
-                  <label>妖盟名称<input id="memberGuild" type="text" required placeholder="如 劳资蜀道山"></label>
-                  <label>盟主昵称<input id="memberName" type="text" required placeholder="如 猪了个猪"></label>
-                  <label class="full">妖盟备注<textarea id="memberNote" rows="4" placeholder="可填写招新要求、联盟风格、注意事项"></textarea></label>
-                  <button type="submit" class="primary-btn full" id="memberSubmitBtn">保存妖盟</button>
-                </form>
-              </section>
-
-              <section class="admin-card admin-card--full">
-                <div class="admin-card__head">
-                  <h3>妖盟管理列表</h3>
-                  <button type="button" class="ghost-btn" id="refreshBtn">刷新数据</button>
-                </div>
-                <div class="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>联盟</th>
-                        <th>山头号</th>
-                        <th>妖盟</th>
-                        <th>盟主</th>
-                        <th>操作</th>
-                      </tr>
-                    </thead>
-                    <tbody id="adminMemberTable"></tbody>
-                  </table>
-                </div>
-              </section>
-            </div>
+            <form id="loginForm" class="stack-form">
+              <label>
+                <span>账号</span>
+                <input id="username" type="text" placeholder="管理员账号" autocomplete="username">
+              </label>
+              <label>
+                <span>密码</span>
+                <input id="password" type="password" placeholder="管理员密码" autocomplete="current-password">
+              </label>
+              <button type="submit" class="primary-btn">管理员登录</button>
+              <p class="form-hint">普通用户请使用统一认证页登录或注册。</p>
+              <a class="text-link" href="/auth.html">打开登录 / 注册页</a>
+            </form>
+            <button id="logoutBtn" type="button" class="ghost-btn hidden">退出登录</button>
           </article>
         </section>
 
+        <section class="board-panel" data-panel="guildAdmin">
+          <article id="guildAdminGate" class="panel-card">
+            <h2>妖盟管理</h2>
+            <p>请先登录管理员账号，再使用录入和管理功能。</p>
+          </article>
+
+          <div id="guildAdminLayout" class="stack-layout hidden">
+            <article class="panel-card">
+              <div class="panel-card__head">
+                <div>
+                  <h2 id="memberFormTitle">录入新妖盟</h2>
+                  <p id="memberFormHint" class="panel-hint">填写妖盟基础信息，保存后即可继续补成员。</p>
+                </div>
+                <button id="resetMemberBtn" type="button" class="ghost-btn">清空表单</button>
+              </div>
+              <form id="memberForm" class="grid-form">
+                <input id="memberId" type="hidden" value="">
+                <label>
+                  <span>联盟名称</span>
+                  <input id="memberAlliance" type="text" value="🔮联盟">
+                </label>
+                <label>
+                  <span>妖盟编号</span>
+                  <input id="memberGuildCode" type="text" placeholder="如 833">
+                </label>
+                <label>
+                  <span>山名字号</span>
+                  <input id="memberGuildPrefix" type="text" placeholder="如 长虹山">
+                </label>
+                <label>
+                  <span>妖盟总战力</span>
+                  <input id="memberGuildPower" type="text" placeholder="支持小数，可写 26万亿">
+                </label>
+                <label>
+                  <span>妖盟名称</span>
+                  <input id="memberGuild" type="text" placeholder="如 凌霄">
+                </label>
+                <label>
+                  <span>盟主昵称</span>
+                  <input id="memberName" type="text" placeholder="可留空">
+                </label>
+                <button id="memberSubmitBtn" type="submit" class="primary-btn grid-form__submit">保存妖盟</button>
+              </form>
+            </article>
+
+            <article class="panel-card">
+              <div class="panel-card__head">
+                <h2>妖盟管理列表</h2>
+                <button id="refreshBtn" type="button" class="ghost-btn">刷新数据</button>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>联盟</th>
+                      <th>山头号</th>
+                      <th>妖盟</th>
+                      <th>妖盟总战力</th>
+                      <th>盟主</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="adminMemberTable"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
+
         <section class="board-panel" data-panel="announcementAdmin">
-          <article class="panel-card">
+          <article id="announcementAdminGate" class="panel-card">
+            <h2>内容发布</h2>
+            <p>请先登录管理员账号，再发布或管理动态。</p>
+          </article>
+
+          <div id="announcementAdminLayout" class="stack-layout hidden">
+            <article class="panel-card">
+              <div class="panel-card__head">
+                <div>
+                  <h2 id="announcementFormTitle">发布内容</h2>
+                  <p class="panel-hint">公告用于正经通知，瓜棚用于日常八卦和轻松内容。</p>
+                </div>
+                <button id="resetAnnouncementBtn" type="button" class="ghost-btn">清空表单</button>
+              </div>
+              <form id="announcementForm" class="stack-form">
+                <input id="announcementId" type="hidden" value="">
+                <label>
+                  <span>分类</span>
+                  <select id="announcementCategory">
+                    <option value="公告">公告</option>
+                    <option value="瓜棚">瓜棚</option>
+                  </select>
+                </label>
+                <label>
+                  <span>标题</span>
+                  <input id="announcementTitle" type="text" placeholder="输入标题">
+                </label>
+                <label>
+                  <span>内容</span>
+                  <textarea id="announcementContent" rows="5" placeholder="输入内容"></textarea>
+                </label>
+                <button id="announcementSubmitBtn" type="submit" class="primary-btn">发布内容</button>
+              </form>
+            </article>
+
+            <article class="panel-card">
+              <div class="panel-card__head">
+                <h2>已发布内容</h2>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>分类</th>
+                      <th>标题</th>
+                      <th>发布时间</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="adminAnnouncementTable"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="board-panel" data-panel="adminProfile">
+          <article id="adminProfileGuest" class="panel-card hidden">
+            <h2>管理员主页</h2>
+            <p>当前未登录管理员。</p>
+          </article>
+          <article id="adminProfilePanel" class="panel-card hidden">
             <div class="panel-card__head">
-              <h2>📣 发布动态</h2>
+              <div>
+                <h2 id="adminProfileName">管理员</h2>
+                <p id="adminProfileUsername">账号：-</p>
+              </div>
             </div>
-
-            <div class="admin-gate" id="announcementAdminGate">
-              <p>请先登录管理员账号，再发布或管理动态。</p>
+            <div class="stats-grid">
+              <div class="stats-card"><span>显示名</span><strong id="adminProfileDisplayName">-</strong></div>
+              <div class="stats-card"><span>账号</span><strong id="adminProfileAccount">-</strong></div>
+              <div class="stats-card"><span>成员数</span><strong id="adminProfileMemberCount">0</strong></div>
+              <div class="stats-card"><span>妖盟数</span><strong id="adminProfileGuildCount">0</strong></div>
+              <div class="stats-card"><span>联盟数</span><strong id="adminProfileHillCount">0</strong></div>
+              <div class="stats-card"><span>动态数</span><strong id="adminProfileAnnouncementCount">0</strong></div>
             </div>
-
-            <div class="admin-layout hidden" id="announcementAdminLayout">
-              <section class="admin-card admin-card--full">
-                <div class="admin-card__head">
-                  <h3 id="announcementFormTitle">发布动态</h3>
-                  <button type="button" class="ghost-btn" id="resetAnnouncementBtn">清空表单</button>
-                </div>
-                <form id="announcementForm" class="announcement-form">
-                  <input type="hidden" id="announcementId">
-                  <label>分类
-                    <select id="announcementCategory">
-                      <option value="公告">公告</option>
-                      <option value="瓜棚">瓜棚</option>
-                    </select>
-                  </label>
-                  <label>标题<input id="announcementTitle" type="text" required></label>
-                  <label class="full">内容<textarea id="announcementContent" rows="5" required></textarea></label>
-                  <button type="submit" class="primary-btn full" id="announcementSubmitBtn">发布内容</button>
-                </form>
-              </section>
-
-              <section class="admin-card admin-card--full">
-                <div class="admin-card__head">
-                  <h3>动态管理列表</h3>
-                </div>
-                <div class="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>分类</th>
-                        <th>标题</th>
-                        <th>发布时间</th>
-                        <th>操作</th>
-                      </tr>
-                    </thead>
-                    <tbody id="adminAnnouncementTable"></tbody>
-                  </table>
-                </div>
-              </section>
-            </div>
+            <div id="adminProfileActions" class="panel-toolbar"></div>
           </article>
         </section>
       </section>
     </main>
+
+    <section class="feed-board">
+      <article class="panel-card">
+        <div class="panel-card__head">
+          <h2>联盟公告</h2>
+        </div>
+        <div id="announcementList" class="feed-list"></div>
+      </article>
+    </section>
   </div>
 
   <template id="rankingItemTemplate">
     <article class="ranking-item">
       <span class="ranking-item__index"></span>
-      <div>
+      <div class="ranking-item__body">
         <strong class="ranking-item__name"></strong>
         <p class="ranking-item__meta"></p>
       </div>
-      <strong class="ranking-item__power"></strong>
+      <b class="ranking-item__power"></b>
     </article>
   </template>
 
@@ -252,18 +311,64 @@
         <h3 id="guildEditTitle">编辑妖盟</h3>
         <button type="button" class="ghost-btn" data-close-modal="guild-edit">关闭</button>
       </div>
-      <form id="guildEditForm" class="member-form">
-        <input type="hidden" id="guildEditKey">
-        <label>联盟名称<input id="guildEditAlliance" type="text" readonly></label>
-        <label>山头号<input id="guildEditCode" type="text" readonly></label>
-        <label>山名字号<input id="guildEditPrefix" type="text" readonly></label>
-        <label>妖盟总战力<input id="guildEditPower" type="text" readonly></label>
-        <label>妖盟名称<input id="guildEditName" type="text" required></label>
-        <label>盟主昵称<input id="guildEditLeader" type="text" required></label>
-        <label class="full">妖盟备注<textarea id="guildEditNote" rows="3" readonly></textarea></label>
-        <div class="modal__actions full">
+      <form id="guildEditForm" class="grid-form modal-form">
+        <input id="guildEditKey" type="hidden">
+        <input id="guildEditLeaderId" type="hidden">
+        <label>
+          <span>联盟</span>
+          <input id="guildEditAlliance" type="text">
+        </label>
+        <label>
+          <span>山头号</span>
+          <input id="guildEditCode" type="text">
+        </label>
+        <label>
+          <span>山名字号</span>
+          <input id="guildEditPrefix" type="text">
+        </label>
+        <label>
+          <span>妖盟总战力</span>
+          <input id="guildEditPower" type="text" placeholder="支持小数，可写 26万亿">
+        </label>
+        <label>
+          <span>妖盟名称</span>
+          <input id="guildEditName" type="text">
+        </label>
+        <label>
+          <span>盟主昵称</span>
+          <input id="guildEditLeader" type="text" placeholder="可留空">
+        </label>
+        <div class="modal-actions">
           <button type="button" class="ghost-btn" data-close-modal="guild-edit">取消</button>
           <button type="submit" class="primary-btn">保存修改</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="hillEditModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="hill-edit"></div>
+    <div class="modal__dialog">
+      <div class="modal__head">
+        <h3>编辑联盟</h3>
+        <button type="button" class="ghost-btn" data-close-modal="hill-edit">关闭</button>
+      </div>
+      <form id="hillEditForm" class="stack-form modal-form">
+        <input id="hillEditOldName" type="hidden">
+        <label>
+          <span>当前联盟</span>
+          <input id="hillEditCurrentName" type="text" readonly>
+        </label>
+        <label>
+          <span>新联盟名称</span>
+          <input id="hillEditName" type="text" placeholder="输入新的联盟名称">
+        </label>
+        <div class="modal-actions modal-actions--split">
+          <button id="hillDeleteBtn" type="button" class="danger-btn">删除整个联盟</button>
+          <div class="modal-actions__right">
+            <button type="button" class="ghost-btn" data-close-modal="hill-edit">取消</button>
+            <button type="submit" class="primary-btn">保存修改</button>
+          </div>
         </div>
       </form>
     </div>
@@ -276,25 +381,70 @@
         <h3 id="memberEditTitle">编辑成员</h3>
         <button type="button" class="ghost-btn" data-close-modal="member-edit">关闭</button>
       </div>
-      <form id="memberEditForm" class="member-form">
-        <input type="hidden" id="memberEditId">
-        <input type="hidden" id="memberEditGuildKey">
-        <label>联盟名称<input id="memberEditAlliance" type="text" readonly></label>
-        <label>所属妖盟<input id="memberEditGuildDisplay" type="text" readonly></label>
-        <label>成员昵称<input id="memberEditName" type="text" required></label>
-        <label>职位<input id="memberEditRole" type="text" required></label>
-        <label>境界<input id="memberEditRealm" type="text" required></label>
-        <label>战力<input id="memberEditPower" type="number" min="0" required></label>
-        <label>敏捷<input id="memberEditSpeed" type="number" min="0" required></label>
-        <label>灵兽<input id="memberEditPet" type="text" required></label>
-        <label>增伤<input id="memberEditBonusDamage" type="number" min="0" required></label>
-        <label>减伤<input id="memberEditDamageReduction" type="number" min="0" required></label>
-        <label class="full">备注<textarea id="memberEditNote" rows="3"></textarea></label>
-        <div class="modal__actions full">
+      <form id="memberEditForm" class="grid-form modal-form">
+        <input id="memberEditId" type="hidden">
+        <input id="memberEditGuildKey" type="hidden">
+        <label>
+          <span>联盟名称</span>
+          <input id="memberEditAlliance" type="text" readonly>
+        </label>
+        <label>
+          <span>所属妖盟</span>
+          <input id="memberEditGuildDisplay" type="text" readonly>
+        </label>
+        <label>
+          <span>成员昵称</span>
+          <input id="memberEditName" type="text">
+        </label>
+        <label>
+          <span>等级</span>
+          <input id="memberEditRole" type="text" placeholder="例如 1200级">
+        </label>
+        <label>
+          <span>境界</span>
+          <input id="memberEditRealm" type="text">
+        </label>
+        <label>
+          <span>战力</span>
+          <input id="memberEditPower" type="text" placeholder="支持小数，可写 10万亿">
+        </label>
+        <label>
+          <span>敏捷</span>
+          <input id="memberEditSpeed" type="text" placeholder="可留空，支持 1万亿">
+        </label>
+        <label>
+          <span>灵兽</span>
+          <input id="memberEditPet" type="text">
+        </label>
+        <label>
+          <span>增伤</span>
+          <input id="memberEditBonusDamage" type="text" placeholder="可留空，支持小数">
+        </label>
+        <label>
+          <span>减伤</span>
+          <input id="memberEditDamageReduction" type="text" placeholder="可留空，支持小数">
+        </label>
+        <textarea id="memberEditNote" class="hidden"></textarea>
+        <div class="modal-actions">
           <button type="button" class="ghost-btn" data-close-modal="member-edit">取消</button>
           <button type="submit" class="primary-btn">保存成员</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <input id="memberScreenshotInput" type="file" accept="image/*" class="hidden">
+
+  <div id="screenshotPreviewModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="screenshot-preview"></div>
+    <div class="modal__dialog modal__dialog--preview">
+      <div class="modal__head">
+        <h3 id="screenshotPreviewTitle">成员截图预览</h3>
+        <button type="button" class="ghost-btn" data-close-modal="screenshot-preview">关闭</button>
+      </div>
+      <div class="screenshot-preview">
+        <img id="screenshotPreviewImage" src="" alt="成员截图预览">
+      </div>
     </div>
   </div>
 
