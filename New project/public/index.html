@@ -14,12 +14,17 @@
     <header class="board-top">
       <div class="board-top__brand">
         <p class="board-eyebrow">XUNDAO DQ ALLIANCE BOARD</p>
-        <h1 id="allianceName">🔮联盟</h1>
+        <h1 id="allianceName">联盟总览</h1>
       </div>
       <div class="board-top__stats">
         <span id="memberCount">0 名成员</span>
         <span id="guildCount">0 个妖盟</span>
         <span id="hillCount">0 个联盟</span>
+      </div>
+      <div class="board-top__actions">
+        <button id="roleApplyBtn" type="button" class="ghost-btn hidden">申请联盟管理员</button>
+        <button id="roleRequestBtn" type="button" class="ghost-btn hidden">申请列表</button>
+        <button id="certRequestBtn" type="button" class="ghost-btn hidden">认证申请</button>
       </div>
     </header>
 
@@ -66,7 +71,7 @@
               <div class="detail-title-group">
                 <button type="button" id="guildDetailBack" class="detail-back-btn">返回总览</button>
                 <h2 id="guildDetailTitle">妖盟详情</h2>
-                <p id="guildDetailMeta" class="detail-meta">点击妖盟卡片可查看完整成员信息。</p>
+                <p id="guildDetailMeta" class="detail-meta">点击妖盟卡片查看完整成员信息。</p>
               </div>
               <div id="guildDetailActions" class="panel-toolbar"></div>
             </div>
@@ -106,7 +111,7 @@
             </div>
             <form id="melonPostForm" class="melon-post-form">
               <input id="melonTitle" type="text" placeholder="标题" required>
-              <textarea id="melonContent" rows="2" placeholder="分享新鲜事..." required></textarea>
+              <textarea id="melonContent" rows="2" placeholder="分享新鲜内容..." required></textarea>
               <button type="submit" class="primary-btn">发布</button>
             </form>
             <div id="melonList" class="feed-list"></div>
@@ -129,7 +134,7 @@
                 <input id="password" type="password" placeholder="管理员密码" autocomplete="current-password">
               </label>
               <button type="submit" class="primary-btn">管理员登录</button>
-              <p class="form-hint">普通用户请使用统一认证页登录或注册。</p>
+              <p class="form-hint">普通用户请使用统一认证页面登录或注册。</p>
               <a class="text-link" href="/auth.html">打开登录 / 注册页</a>
             </form>
             <button id="logoutBtn" type="button" class="ghost-btn hidden">退出登录</button>
@@ -146,7 +151,7 @@
             <article class="panel-card">
               <div class="panel-card__head">
                 <div>
-                  <h2 id="memberFormTitle">录入新妖盟</h2>
+                  <h2 id="memberFormTitle">新增妖盟</h2>
                   <p id="memberFormHint" class="panel-hint">填写妖盟基础信息，保存后即可继续补成员。</p>
                 </div>
                 <button id="resetMemberBtn" type="button" class="ghost-btn">清空表单</button>
@@ -155,23 +160,23 @@
                 <input id="memberId" type="hidden" value="">
                 <label>
                   <span>联盟名称</span>
-                  <input id="memberAlliance" type="text" value="🔮联盟">
+                  <input id="memberAlliance" type="text" value="联盟总览">
                 </label>
                 <label>
                   <span>妖盟编号</span>
-                  <input id="memberGuildCode" type="text" placeholder="如 833">
+                  <input id="memberGuildCode" type="text" placeholder="例如 833">
                 </label>
                 <label>
                   <span>山名字号</span>
-                  <input id="memberGuildPrefix" type="text" placeholder="如 长虹山">
+                  <input id="memberGuildPrefix" type="text" placeholder="例如 长虹山">
                 </label>
                 <label>
                   <span>妖盟总战力</span>
-                  <input id="memberGuildPower" type="text" placeholder="支持小数，可写 26万亿">
+                  <input id="memberGuildPower" type="text" placeholder="支持小数，例如 26万亿">
                 </label>
                 <label>
                   <span>妖盟名称</span>
-                  <input id="memberGuild" type="text" placeholder="如 凌霄">
+                  <input id="memberGuild" type="text" placeholder="例如 凌霄">
                 </label>
                 <label>
                   <span>盟主昵称</span>
@@ -191,9 +196,9 @@
                   <thead>
                     <tr>
                       <th>联盟</th>
-                      <th>山头号</th>
+                      <th>编号</th>
                       <th>妖盟</th>
-                      <th>妖盟总战力</th>
+                      <th>总战力</th>
                       <th>盟主</th>
                       <th>操作</th>
                     </tr>
@@ -216,7 +221,7 @@
               <div class="panel-card__head">
                 <div>
                   <h2 id="announcementFormTitle">发布内容</h2>
-                  <p class="panel-hint">公告用于正经通知，瓜棚用于日常八卦和轻松内容。</p>
+                  <p class="panel-hint">公告用于正式通知，瓜棚用于轻松内容分享。</p>
                 </div>
                 <button id="resetAnnouncementBtn" type="button" class="ghost-btn">清空表单</button>
               </div>
@@ -319,30 +324,12 @@
       <form id="guildEditForm" class="grid-form modal-form">
         <input id="guildEditKey" type="hidden">
         <input id="guildEditLeaderId" type="hidden">
-        <label>
-          <span>联盟</span>
-          <input id="guildEditAlliance" type="text">
-        </label>
-        <label>
-          <span>山头号</span>
-          <input id="guildEditCode" type="text">
-        </label>
-        <label>
-          <span>山名字号</span>
-          <input id="guildEditPrefix" type="text">
-        </label>
-        <label>
-          <span>妖盟总战力</span>
-          <input id="guildEditPower" type="text" placeholder="支持小数，可写 26万亿">
-        </label>
-        <label>
-          <span>妖盟名称</span>
-          <input id="guildEditName" type="text">
-        </label>
-        <label>
-          <span>盟主昵称</span>
-          <input id="guildEditLeader" type="text" placeholder="可留空">
-        </label>
+        <label><span>联盟</span><input id="guildEditAlliance" type="text"></label>
+        <label><span>编号</span><input id="guildEditCode" type="text"></label>
+        <label><span>字号</span><input id="guildEditPrefix" type="text"></label>
+        <label><span>总战力</span><input id="guildEditPower" type="text"></label>
+        <label><span>妖盟名称</span><input id="guildEditName" type="text"></label>
+        <label><span>盟主昵称</span><input id="guildEditLeader" type="text"></label>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-close-modal="guild-edit">取消</button>
           <button type="submit" class="primary-btn">保存修改</button>
@@ -360,14 +347,8 @@
       </div>
       <form id="hillEditForm" class="stack-form modal-form">
         <input id="hillEditOldName" type="hidden">
-        <label>
-          <span>当前联盟</span>
-          <input id="hillEditCurrentName" type="text" readonly>
-        </label>
-        <label>
-          <span>新联盟名称</span>
-          <input id="hillEditName" type="text" placeholder="输入新的联盟名称">
-        </label>
+        <label><span>当前联盟</span><input id="hillEditCurrentName" type="text" readonly></label>
+        <label><span>新联盟名称</span><input id="hillEditName" type="text" placeholder="输入新的联盟名称"></label>
         <div class="modal-actions modal-actions--split">
           <button id="hillDeleteBtn" type="button" class="danger-btn">删除整个联盟</button>
           <div class="modal-actions__right">
@@ -389,46 +370,16 @@
       <form id="memberEditForm" class="grid-form modal-form">
         <input id="memberEditId" type="hidden">
         <input id="memberEditGuildKey" type="hidden">
-        <label>
-          <span>联盟名称</span>
-          <input id="memberEditAlliance" type="text" readonly>
-        </label>
-        <label>
-          <span>所属妖盟</span>
-          <input id="memberEditGuildDisplay" type="text" readonly>
-        </label>
-        <label>
-          <span>成员昵称</span>
-          <input id="memberEditName" type="text">
-        </label>
-        <label>
-          <span>等级</span>
-          <input id="memberEditRole" type="text" placeholder="例如 1200级">
-        </label>
-        <label>
-          <span>境界</span>
-          <input id="memberEditRealm" type="text">
-        </label>
-        <label>
-          <span>战力</span>
-          <input id="memberEditPower" type="text" placeholder="支持小数，可写 10万亿">
-        </label>
-        <label>
-          <span>敏捷</span>
-          <input id="memberEditSpeed" type="text" placeholder="可留空，支持 1万亿">
-        </label>
-        <label>
-          <span>灵兽</span>
-          <input id="memberEditPet" type="text">
-        </label>
-        <label>
-          <span>增伤</span>
-          <input id="memberEditBonusDamage" type="text" placeholder="可留空，支持小数">
-        </label>
-        <label>
-          <span>减伤</span>
-          <input id="memberEditDamageReduction" type="text" placeholder="可留空，支持小数">
-        </label>
+        <label><span>联盟名称</span><input id="memberEditAlliance" type="text" readonly></label>
+        <label><span>所属妖盟</span><input id="memberEditGuildDisplay" type="text" readonly></label>
+        <label><span>成员昵称</span><input id="memberEditName" type="text"></label>
+        <label><span>等级</span><input id="memberEditRole" type="text" placeholder="例如 1200级"></label>
+        <label><span>境界</span><input id="memberEditRealm" type="text"></label>
+        <label><span>战力</span><input id="memberEditPower" type="text"></label>
+        <label><span>敏捷</span><input id="memberEditSpeed" type="text"></label>
+        <label><span>灵兽</span><input id="memberEditPet" type="text"></label>
+        <label><span>增伤</span><input id="memberEditBonusDamage" type="text"></label>
+        <label><span>减伤</span><input id="memberEditDamageReduction" type="text"></label>
         <textarea id="memberEditNote" class="hidden"></textarea>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-close-modal="member-edit">取消</button>
@@ -438,20 +389,62 @@
     </div>
   </div>
 
-  <input id="memberScreenshotInput" type="file" accept="image/*" class="hidden">
-
   <div id="screenshotPreviewModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="screenshot-preview"></div>
-    <div class="modal__dialog modal__dialog--preview">
+    <div class="modal__dialog modal__dialog--wide">
       <div class="modal__head">
-        <h3 id="screenshotPreviewTitle">成员截图预览</h3>
+        <h3 id="screenshotPreviewTitle">截图预览</h3>
         <button type="button" class="ghost-btn" data-close-modal="screenshot-preview">关闭</button>
       </div>
-      <div class="screenshot-preview">
-        <img id="screenshotPreviewImage" src="" alt="成员截图预览">
+      <div class="modal__body">
+        <img id="screenshotPreviewImage" alt="截图预览" style="width:100%;border-radius:18px;">
       </div>
     </div>
   </div>
+
+  <div id="roleApplyModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="role-apply"></div>
+    <div class="modal__dialog">
+      <div class="modal__head">
+        <h3>申请联盟管理员</h3>
+        <button type="button" class="ghost-btn" data-close-modal="role-apply">关闭</button>
+      </div>
+      <form id="roleApplyForm" class="stack-form modal-form">
+        <label>
+          <span>目标联盟</span>
+          <select id="roleApplyAlliance"></select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" data-close-modal="role-apply">取消</button>
+          <button type="submit" class="primary-btn">提交申请</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="roleRequestModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="role-request"></div>
+    <div class="modal__dialog modal__dialog--wide">
+      <div class="modal__head">
+        <h3>联盟管理员申请列表</h3>
+        <button type="button" class="ghost-btn" data-close-modal="role-request">关闭</button>
+      </div>
+      <div id="roleRequestList" class="modal__body"></div>
+    </div>
+  </div>
+
+  <div id="certRequestModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="cert-request"></div>
+    <div class="modal__dialog modal__dialog--wide">
+      <div class="modal__head">
+        <h3>成员认证申请</h3>
+        <button type="button" class="ghost-btn" data-close-modal="cert-request">关闭</button>
+      </div>
+      <div id="certRequestList" class="modal__body"></div>
+    </div>
+  </div>
+
+  <input id="memberScreenshotInput" type="file" accept="image/*" class="hidden">
 
   <script src="/app.js"></script>
 </body>

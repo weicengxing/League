@@ -64,6 +64,13 @@ button {
   color: var(--text);
 }
 
+.board-top__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-self: center;
+}
+
 .board-eyebrow {
   margin: 0 0 8px;
   font-size: 0.86rem;
@@ -95,6 +102,92 @@ button {
   border: 1px solid rgba(123, 147, 102, 0.14);
   color: #4a5c45;
   font-weight: 700;
+}
+
+.modal__dialog--wide {
+  width: min(960px, calc(100vw - 32px));
+}
+
+.modal__body {
+  display: grid;
+  gap: 12px;
+  max-height: min(68vh, 720px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.request-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(248, 245, 236, 0.96);
+  border: 1px solid rgba(126, 149, 101, 0.14);
+}
+
+.request-item__body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.request-item__body strong {
+  font-size: 1rem;
+}
+
+.request-item__body p,
+.request-item__body small {
+  margin: 0;
+  color: var(--muted);
+}
+
+.request-item__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  font-weight: 700;
+}
+
+.action-btn--apply {
+  background: linear-gradient(135deg, #7e9565, #9f7a46);
+}
+
+.action-btn--approve {
+  background: linear-gradient(135deg, #5f8d63, #86a44e);
+}
+
+.action-btn--reject {
+  background: linear-gradient(135deg, #b06a54, #d47e5b);
+}
+
+.member-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.member-status--verified {
+  background: rgba(124, 160, 92, 0.16);
+  color: #57743e;
+}
+
+.member-status--pending {
+  background: rgba(208, 164, 90, 0.16);
+  color: #8b6630;
 }
 
 .top-pills {
@@ -735,6 +828,17 @@ button {
   place-items: center;
   padding: 6px;
   text-align: center;
+}
+
+.detail-toolbar-note {
+  display: inline-flex;
+  align-items: center;
+  min-height: 52px;
+  padding: 0 18px;
+  border-radius: 18px;
+  background: rgba(139, 156, 120, 0.12);
+  color: var(--text);
+  font-weight: 600;
 }
 
 .ranking-list,
@@ -1601,4 +1705,21 @@ td {
 
 .melon-revoke-btn:hover {
   background: #ffe0e0;
+}
+
+/* 申请列表按钮徽章 */
+.btn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: #e74c3c;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
 }

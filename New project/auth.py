@@ -23,6 +23,37 @@ DB_PATH = DATA_DIR / "alliance.db"
 logger = logging.getLogger(__name__)
 USER_SESSION_COOKIE = "user_session"
 USER_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7  # 7天
+ROLE_GUEST = "Guest"
+ROLE_VERIFIEDUSER = "VerifiedUser"
+ROLE_ALLIANCEADMIN = "AllianceAdmin"
+ROLE_SUPERADMIN = "SuperAdmin"
+VALID_ROLES = {ROLE_GUEST, ROLE_VERIFIEDUSER, ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN}
+DEFAULT_ROLE_PERMISSIONS = {
+    ROLE_GUEST: {"view_public_content"},
+    ROLE_VERIFIEDUSER: {"view_public_content", "create_posts", "edit_own_profile", "upload_own_screenshot"},
+    ROLE_ALLIANCEADMIN: {
+        "view_public_content",
+        "create_posts",
+        "edit_own_profile",
+        "upload_own_screenshot",
+        "admin_panel_access",
+        "manage_announcements",
+        "manage_guilds",
+        "manage_members",
+    },
+    ROLE_SUPERADMIN: {
+        "view_public_content",
+        "create_posts",
+        "edit_own_profile",
+        "upload_own_screenshot",
+        "admin_panel_access",
+        "manage_announcements",
+        "manage_guilds",
+        "manage_members",
+        "manage_roles",
+        "manage_users",
+    },
+}
 
 # 邮件配置 - 请根据实际情况修改（与 server.py 保持一致）
 SMTP_CONFIG = {
@@ -98,6 +129,36 @@ def open_db():
     return connection
 
 
+def normalize_role(value):
+    role = str(value or "").strip()
+    return role if role in VALID_ROLES else ROLE_GUEST
+
+
+def get_role_permissions(role, connection=None):
+    normalized_role = normalize_role(role)
+    close_connection = connection is None
+    if connection is None:
+        connection = open_db()
+    try:
+        rows = connection.execute(
+            "SELECT permission FROM role_permissions WHERE role = ? ORDER BY permission ASC",
+            (normalized_role,),
+        ).fetchall()
+        return [row["permission"] for row in rows]
+    except sqlite3.OperationalError:
+        return sorted(DEFAULT_ROLE_PERMISSIONS.get(normalized_role, DEFAULT_ROLE_PERMISSIONS[ROLE_GUEST]))
+    finally:
+        if close_connection:
+            connection.close()
+
+
+def update_user_sessions_for_user(user_id, **updates):
+    for session in user_sessions.values():
+        if session.get("user_id") != user_id:
+            continue
+        session.update({key: value for key, value in updates.items() if value is not None})
+
+
 def initialize_auth_database():
     """初始化认证相关的数据库表"""
     with open_db() as connection:
@@ -108,6 +169,9 @@ def initialize_auth_database():
                 username TEXT NOT NULL UNIQUE,
                 email TEXT NOT NULL UNIQUE,
                 member_id INTEGER,
+                member INTEGER,
+                role TEXT NOT NULL DEFAULT 'Guest',
+                alliance TEXT NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
                 verify_code TEXT,
@@ -115,11 +179,30 @@ def initialize_auth_database():
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                role TEXT NOT NULL,
+                permission TEXT NOT NULL,
+                PRIMARY KEY (role, permission)
+            );
             """
         )
         columns = [row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()]
         if "member_id" not in columns:
             connection.execute("ALTER TABLE users ADD COLUMN member_id INTEGER")
+        if "member" not in columns:
+            connection.execute("ALTER TABLE users ADD COLUMN member INTEGER")
+        if "role" not in columns:
+            connection.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'Guest'")
+        if "alliance" not in columns:
+            connection.execute("ALTER TABLE users ADD COLUMN alliance TEXT NOT NULL DEFAULT ''")
+        connection.execute("UPDATE users SET role = 'Guest' WHERE role IS NULL OR role = ''")
+        for role, permissions in DEFAULT_ROLE_PERMISSIONS.items():
+            for permission in permissions:
+                connection.execute(
+                    "INSERT OR IGNORE INTO role_permissions (role, permission) VALUES (?, ?)",
+                    (role, permission),
+                )
         connection.commit()
 
 
@@ -151,29 +234,38 @@ def get_session_from_handler(handler):
 def get_current_auth(handler):
     session = get_session_from_handler(handler)
     if not session:
-        return {"authenticated": False, "user": None, "is_admin": False}
+        return {"authenticated": False, "user": None, "is_admin": False, "permissions": []}
 
+    permissions = get_role_permissions(ROLE_SUPERADMIN if session.get("is_admin") else session.get("role"))
     user = {
         "id": session["user_id"],
         "username": session["username"],
         "is_admin": bool(session.get("is_admin")),
+        "permissions": permissions,
     }
     if session.get("is_admin"):
         user["display_name"] = session.get("display_name", session["username"])
+        user["role"] = ROLE_SUPERADMIN
     else:
         user["email"] = session.get("email")
         user["member_id"] = session.get("member_id")
+        user["member"] = session.get("member")
+        user["role"] = normalize_role(session.get("role"))
+        user["alliance"] = session.get("alliance", "")
 
     return {
         "authenticated": True,
         "user": user,
         "is_admin": bool(session.get("is_admin")),
+        "permissions": permissions,
     }
 
 
 def ensure_member_binding(connection, user_row):
     """尝试按用户名自动关联同名成员，避免普通用户登录后没有个人档案。"""
     member_id = user_row["member_id"] if "member_id" in user_row.keys() else None
+    if not member_id and "member" in user_row.keys():
+        member_id = user_row["member"]
     if member_id:
         return member_id
 
@@ -197,8 +289,8 @@ def ensure_member_binding(connection, user_row):
         return None
 
     connection.execute(
-        "UPDATE users SET member_id = ? WHERE id = ?",
-        (member_id, user_row["id"]),
+        "UPDATE users SET member_id = ?, member = ? WHERE id = ?",
+        (member_id, member_id, user_row["id"]),
     )
     connection.commit()
     return member_id
@@ -310,10 +402,10 @@ class AuthHandler:
             
             connection.execute(
                 """
-                INSERT INTO users (username, email, password_hash, salt, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO users (username, email, member_id, member, role, alliance, password_hash, salt, is_active, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (username, email, password_hash, salt, 1, timestamp),
+                (username, email, None, None, ROLE_GUEST, "", password_hash, salt, 1, timestamp),
             )
             connection.commit()
 
@@ -428,6 +520,7 @@ class AuthHandler:
                     "username": admin_row["username"],
                     "display_name": admin_row["display_name"],
                     "email": None,
+                    "role": ROLE_SUPERADMIN,
                     "is_admin": True,
                     "created_at": datetime.now().timestamp(),
                 }
@@ -447,6 +540,7 @@ class AuthHandler:
                             "id": admin_row["id"],
                             "username": admin_row["username"],
                             "display_name": admin_row["display_name"],
+                            "role": ROLE_SUPERADMIN,
                         }
                     }, ensure_ascii=False).encode("utf-8")
                 )
@@ -475,6 +569,9 @@ class AuthHandler:
                 "username": row["username"],
                 "email": row["email"],
                 "member_id": member_id,
+                "member": row["member"],
+                "role": normalize_role(row["role"]),
+                "alliance": row["alliance"],
                 "is_admin": False,
                 "created_at": datetime.now().timestamp(),
             }
@@ -495,6 +592,9 @@ class AuthHandler:
                             "username": row["username"],
                             "email": row["email"],
                             "member_id": member_id,
+                            "member": row["member"],
+                            "role": normalize_role(row["role"]),
+                            "alliance": row["alliance"],
                         }
                     }, ensure_ascii=False).encode("utf-8")
             )
@@ -666,10 +766,15 @@ class AuthHandler:
         if session.get("is_admin"):
             user_info["display_name"] = session.get("display_name", session["username"])
             user_info["is_admin"] = True
+            user_info["role"] = ROLE_SUPERADMIN
             return self.send_json({"valid": True, "type": "admin", "user": user_info})
         else:
             user_info["email"] = session.get("email")
             user_info["is_admin"] = False
+            user_info["member_id"] = session.get("member_id")
+            user_info["member"] = session.get("member")
+            user_info["role"] = normalize_role(session.get("role"))
+            user_info["alliance"] = session.get("alliance", "")
             return self.send_json({"valid": True, "type": "user", "user": user_info})
 
     def get_current_user_from_session(self):
@@ -684,6 +789,9 @@ class AuthHandler:
             "username": session["username"],
             "email": session["email"],
             "member_id": session.get("member_id"),
+            "member": session.get("member"),
+            "role": normalize_role(session.get("role")),
+            "alliance": session.get("alliance", ""),
         }
 
     def get_current_admin_from_session(self):
@@ -696,6 +804,7 @@ class AuthHandler:
             "username": session["username"],
             "display_name": session.get("display_name", session["username"]),
             "is_admin": True,
+            "role": ROLE_SUPERADMIN,
         }
 
     def read_session_token(self):

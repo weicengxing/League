@@ -20,7 +20,16 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import openpyxl
 
-from auth import AuthHandler, get_current_auth, initialize_auth_database
+from auth import (
+    AuthHandler,
+    ROLE_ALLIANCEADMIN,
+    ROLE_GUEST,
+    ROLE_SUPERADMIN,
+    ROLE_VERIFIEDUSER,
+    get_current_auth,
+    initialize_auth_database,
+    update_user_sessions_for_user,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -236,6 +245,34 @@ def initialize_database():
             """
         )
 
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS member_cert_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                member_id INTEGER NOT NULL,
+                alliance TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                reviewed_at TEXT,
+                reviewer_id INTEGER
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admin_role_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                alliance TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                reviewed_at TEXT,
+                reviewer_id INTEGER
+            )
+            """
+        )
+
         admin_count = connection.execute("SELECT COUNT(*) AS count FROM admins").fetchone()["count"]
         if admin_count == 0:
             salt = secrets.token_hex(16)
@@ -260,6 +297,8 @@ def initialize_database():
             connection.execute("ALTER TABLE members ADD COLUMN bonus_damage INTEGER NOT NULL DEFAULT 0")
         if "damage_reduction" not in columns:
             connection.execute("ALTER TABLE members ADD COLUMN damage_reduction INTEGER NOT NULL DEFAULT 0")
+        if "verified" not in columns:
+            connection.execute("ALTER TABLE members ADD COLUMN verified INTEGER NOT NULL DEFAULT 0")
         if "screenshot_path" not in columns:
             connection.execute("ALTER TABLE members ADD COLUMN screenshot_path TEXT NOT NULL DEFAULT ''")
 
@@ -450,6 +489,28 @@ class AllianceHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/announcements":
             self.send_json(self.list_announcements())
             return
+        if parsed.path == "/api/member-cert-requests":
+            current = get_current_auth(self)
+            if not current.get("authenticated"):
+                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            query = parse_qs(parsed.query)
+            member_id = query.get("member_id", [""])[0].strip() or None
+            self.send_json(self.list_member_cert_requests(current, member_id=member_id))
+            return
+        if parsed.path == "/api/member-cert-requests/mine":
+            current = get_current_auth(self)
+            if not current.get("authenticated"):
+                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self.send_json(self.list_member_cert_requests(current, mine=True))
+            return
+        if parsed.path == "/api/admin-role-requests":
+            user = self.require_permission("manage_roles")
+            if not user:
+                return
+            self.send_json(self.list_admin_role_requests())
+            return
         if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
             member_id = parsed.path.strip("/").split("/")[2]
             self.send_json(self.get_member_screenshot(member_id))
@@ -483,21 +544,21 @@ class AllianceHandler(BaseHTTPRequestHandler):
 
     def handle_api_post(self, parsed):
         if parsed.path == "/api/guilds":
-            admin = self.require_admin()
-            if not admin:
-                return
             payload = self.read_json()
+            user = self.require_permission("manage_guilds", payload.get("alliance", ""))
+            if not user:
+                return
             self.create_guild(payload)
             return
         if parsed.path == "/api/members":
-            admin = self.require_admin()
-            if not admin:
-                return
             payload = self.read_json()
+            user = self.require_permission("manage_members", payload.get("alliance", ""))
+            if not user:
+                return
             self.create_member(payload)
             return
         if parsed.path == "/api/profile/me/screenshot":
-            user = self.require_normal_user()
+            user = self.require_permission("upload_own_screenshot", allow_admin_account=False)
             if not user:
                 return
             self.upload_current_user_screenshot(user)
@@ -509,30 +570,74 @@ class AllianceHandler(BaseHTTPRequestHandler):
             AuthHandler(self).logout()
             return
         if parsed.path == "/api/announcements":
-            admin = self.require_admin()
-            if not admin:
+            user = self.require_permission("manage_announcements")
+            if not user:
                 return
             payload = self.read_json()
             self.create_announcement(payload)
             return
         if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
-            admin = self.require_admin()
-            if not admin:
-                return
             member_id = parsed.path.strip("/").split("/")[2]
+            member = self.get_member_item(member_id)
+            if not member:
+                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            user = self.require_permission("manage_members", member.get("alliance", ""))
+            if not user:
+                return
             self.upload_member_screenshot(member_id)
             return
         if parsed.path == "/api/members/import":
-            admin = self.require_admin()
-            if not admin:
+            current = get_current_auth(self)
+            if not current.get("authenticated"):
+                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            user = current.get("user") or {}
+            if not self.has_permission(user, "manage_members"):
+                self.send_json({"error": "当前账号没有执行该操作的权限"}, status=HTTPStatus.FORBIDDEN)
                 return
             self.import_members_from_excel()
             return
+        if parsed.path == "/api/member-cert-requests":
+            current = get_current_auth(self)
+            if not current.get("authenticated") or current.get("user", {}).get("role") != ROLE_GUEST:
+                self.send_json({"error": "仅 Guest 可发起认证申请"}, status=HTTPStatus.FORBIDDEN)
+                return
+            payload = self.read_json()
+            self.create_member_cert_request(current, payload)
+            return
+        if parsed.path == "/api/admin-role-requests":
+            current = get_current_auth(self)
+            if not current.get("authenticated") or current.get("is_admin"):
+                self.send_json({"error": "仅普通用户可申请联盟管理员"}, status=HTTPStatus.FORBIDDEN)
+                return
+            payload = self.read_json()
+            self.create_admin_role_request(current, payload)
+            return
+        if parsed.path.startswith("/api/member-cert-requests/"):
+            current = get_current_auth(self)
+            if not current.get("authenticated") or not self.has_permission(current.get("user") or {}, "manage_members"):
+                self.send_json({"error": "当前账号没有审核认证申请的权限"}, status=HTTPStatus.FORBIDDEN)
+                return
+            payload = self.read_json()
+            request_id = parsed.path.rsplit("/", 1)[-1]
+            self.review_member_cert_request(request_id, payload, current)
+            return
+        if parsed.path.startswith("/api/admin-role-requests/"):
+            user = self.require_permission("manage_roles")
+            if not user:
+                return
+            payload = self.read_json()
+            request_id = parsed.path.rsplit("/", 1)[-1]
+            self.review_admin_role_request(request_id, payload, {"authenticated": True, "user": user})
+            return
         if parsed.path == "/api/melon":
-            # 瓜棚发布接口：所有登录用户都可以发布
             user = self.get_current_user_or_admin()
             if not user:
-                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+                self.send_json({"error": "请先认证"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            if not self.has_permission(user, "create_posts"):
+                self.send_json({"error": "当前账号没有发布瓜棚的权限"}, status=HTTPStatus.FORBIDDEN)
                 return
             payload = self.read_json()
             self.create_melon_post(user, payload)
@@ -541,31 +646,47 @@ class AllianceHandler(BaseHTTPRequestHandler):
 
     def handle_api_put(self, parsed):
         if parsed.path.startswith("/api/guilds/"):
-            admin = self.require_admin()
-            if not admin:
+            guild_key = unquote(parsed.path.rsplit("/", 1)[-1])
+            existing = self.get_guild_registry_item(guild_key)
+            if not existing:
+                self.send_json({"error": "妖盟不存在"}, status=HTTPStatus.NOT_FOUND)
                 return
             payload = self.read_json()
-            guild_key = unquote(parsed.path.rsplit("/", 1)[-1])
+            user = self.require_permission("manage_guilds", existing.get("alliance", ""))
+            if not user:
+                return
+            target_alliance = str(payload.get("alliance", existing.get("alliance", ""))).strip()
+            if target_alliance and target_alliance != str(existing.get("alliance", "")).strip() and not self.can_access_alliance(user, target_alliance, "manage_guilds"):
+                self.send_json({"error": "当前账号不能把妖盟调整到其他联盟"}, status=HTTPStatus.FORBIDDEN)
+                return
             self.update_guild(guild_key, payload)
             return
         if parsed.path == "/api/profile/me":
-            user = self.require_normal_user()
+            user = self.require_permission("edit_own_profile", allow_admin_account=False)
             if not user:
                 return
             payload = self.read_json()
             self.update_current_user_profile(user, payload)
             return
         if parsed.path.startswith("/api/members/"):
-            admin = self.require_admin()
-            if not admin:
+            member_id = parsed.path.rsplit("/", 1)[-1]
+            existing = self.get_member_item(member_id)
+            if not existing:
+                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
                 return
             payload = self.read_json()
-            member_id = parsed.path.rsplit("/", 1)[-1]
+            user = self.require_permission("manage_members", existing.get("alliance", ""))
+            if not user:
+                return
+            target_alliance = str(payload.get("alliance", existing.get("alliance", ""))).strip()
+            if target_alliance and target_alliance != str(existing.get("alliance", "")).strip() and not self.can_access_alliance(user, target_alliance, "manage_members"):
+                self.send_json({"error": "当前账号不能把成员调整到其他联盟"}, status=HTTPStatus.FORBIDDEN)
+                return
             self.update_member(member_id, payload)
             return
         if parsed.path.startswith("/api/announcements/"):
-            admin = self.require_admin()
-            if not admin:
+            user = self.require_permission("manage_announcements")
+            if not user:
                 return
             payload = self.read_json()
             announcement_id = parsed.path.rsplit("/", 1)[-1]
@@ -575,41 +696,52 @@ class AllianceHandler(BaseHTTPRequestHandler):
 
     def handle_api_delete(self, parsed):
         if parsed.path.startswith("/api/guilds/"):
-            admin = self.require_admin()
-            if not admin:
-                return
             guild_key = unquote(parsed.path.rsplit("/", 1)[-1])
+            existing = self.get_guild_registry_item(guild_key)
+            if not existing:
+                self.send_json({"error": "妖盟不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            user = self.require_permission("manage_guilds", existing.get("alliance", ""))
+            if not user:
+                return
             self.delete_guild(guild_key)
             return
         if parsed.path == "/api/profile/me/screenshot":
-            user = self.require_normal_user()
+            user = self.require_permission("upload_own_screenshot", allow_admin_account=False)
             if not user:
                 return
             self.delete_current_user_screenshot(user)
             return
         if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
-            admin = self.require_admin()
-            if not admin:
-                return
             member_id = parsed.path.strip("/").split("/")[2]
+            member = self.get_member_item(member_id)
+            if not member:
+                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            user = self.require_permission("manage_members", member.get("alliance", ""))
+            if not user:
+                return
             self.delete_member_screenshot(member_id)
             return
         if parsed.path.startswith("/api/members/"):
-            admin = self.require_admin()
-            if not admin:
-                return
             member_id = parsed.path.rsplit("/", 1)[-1]
+            member = self.get_member_item(member_id)
+            if not member:
+                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            user = self.require_permission("manage_members", member.get("alliance", ""))
+            if not user:
+                return
             self.delete_by_id("members", member_id)
             return
         if parsed.path.startswith("/api/announcements/"):
-            admin = self.require_admin()
-            if not admin:
+            user = self.require_permission("manage_announcements")
+            if not user:
                 return
             announcement_id = parsed.path.rsplit("/", 1)[-1]
             self.delete_by_id("announcements", announcement_id)
             return
         if parsed.path.startswith("/api/melon/"):
-            # 瓜棚撤回接口：发布者可在2分钟内撤回
             user = self.get_current_user_or_admin()
             if not user:
                 self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
@@ -1409,6 +1541,11 @@ class AllianceHandler(BaseHTTPRequestHandler):
                 
                 alliance = guild["alliance"]
                 hill = guild["hill"]
+                current = get_current_auth(self)
+                user = current.get("user") or {}
+                if not current.get("authenticated") or not self.can_access_alliance(user, alliance, "manage_members"):
+                    self.send_json({"error": "当前账号没有导入该联盟成员的权限"}, status=HTTPStatus.FORBIDDEN)
+                    return
                 
                 # 过滤掉已存在的成员
                 new_members = [row for row in unique_rows if row["name"] not in existing_names]
@@ -1473,6 +1610,318 @@ class AllianceHandler(BaseHTTPRequestHandler):
             except:
                 pass
 
+    def get_known_alliances(self, connection):
+        rows = connection.execute(
+            """
+            SELECT DISTINCT alliance
+            FROM members
+            WHERE alliance IS NOT NULL AND alliance != ''
+            ORDER BY alliance COLLATE NOCASE ASC
+            """
+        ).fetchall()
+        return [row["alliance"] for row in rows]
+
+    def sync_verified_member_flags(self, connection):
+        connection.execute(
+            """
+            UPDATE members
+            SET verified = 1
+            WHERE id IN (
+                SELECT DISTINCT member_id FROM users WHERE member_id IS NOT NULL AND role = ?
+            )
+            """,
+            (ROLE_VERIFIEDUSER,),
+        )
+        connection.commit()
+
+    def list_member_cert_requests(self, current, mine=False, member_id=None):
+        user = current.get("user") or {}
+        role = user.get("role") or ROLE_GUEST
+        params = []
+        clauses = ["r.status = 'pending'"]
+        if mine:
+            clauses.append("r.user_id = ?")
+            params.append(user.get("id"))
+        elif role == ROLE_ALLIANCEADMIN:
+            clauses.append("r.alliance = ?")
+            params.append(user.get("alliance", ""))
+        elif role != ROLE_SUPERADMIN:
+            clauses.append("r.user_id = ?")
+            params.append(user.get("id"))
+        if member_id:
+            clauses.append("r.member_id = ?")
+            params.append(int(member_id))
+
+        where_sql = " AND ".join(clauses)
+        with open_db() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT r.*, u.username, u.email, u.role AS user_role, u.alliance AS user_alliance,
+                       m.name AS member_name, m.guild AS guild_name, m.verified AS member_verified
+                FROM member_cert_requests r
+                LEFT JOIN users u ON u.id = r.user_id
+                LEFT JOIN members m ON m.id = r.member_id
+                WHERE {where_sql}
+                ORDER BY r.id DESC
+                """,
+                tuple(params),
+            ).fetchall()
+        return {
+            "items": [
+                {
+                    "id": row["id"],
+                    "user_id": row["user_id"],
+                    "member_id": row["member_id"],
+                    "alliance": row["alliance"],
+                    "status": row["status"],
+                    "created_at": row["created_at"],
+                    "reviewed_at": row["reviewed_at"],
+                    "reviewer_id": row["reviewer_id"],
+                    "username": row["username"],
+                    "email": row["email"],
+                    "display_name": row["username"],
+                    "member_name": row["member_name"],
+                    "guild_name": row["guild_name"],
+                    "member_verified": row["member_verified"],
+                }
+                for row in rows
+            ]
+        }
+
+    def create_member_cert_request(self, current, payload):
+        user = current.get("user") or {}
+        member_id = str(payload.get("member_id", "")).strip()
+        if not member_id.isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        with open_db() as connection:
+            member = connection.execute("SELECT * FROM members WHERE id = ?", (member_id,)).fetchone()
+            if not member:
+                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if int(member["verified"] or 0) == 1:
+                self.send_json({"error": "该成员已经认证"}, status=HTTPStatus.CONFLICT)
+                return
+            exists = connection.execute(
+                """
+                SELECT id FROM member_cert_requests
+                WHERE user_id = ? AND member_id = ? AND status = 'pending'
+                """,
+                (user.get("id"), member_id),
+            ).fetchone()
+            if exists:
+                self.send_json({"error": "你已经提交过该成员的认证申请"}, status=HTTPStatus.CONFLICT)
+                return
+            timestamp = now_text()
+            connection.execute(
+                """
+                INSERT INTO member_cert_requests (user_id, member_id, alliance, status, created_at)
+                VALUES (?, ?, ?, 'pending', ?)
+                """,
+                (user.get("id"), member_id, member["alliance"], timestamp),
+            )
+            connection.commit()
+        self.send_json({"message": "认证申请已提交"}, status=HTTPStatus.CREATED)
+
+    def review_member_cert_request(self, request_id, payload, current):
+        action = str(payload.get("action", "")).strip().lower()
+        if action not in {"approve", "reject"}:
+            self.send_json({"error": "操作无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if not str(request_id).isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        user = current.get("user") or {}
+        with open_db() as connection:
+            row = connection.execute(
+                """
+                SELECT r.*, u.username, u.role AS user_role, u.alliance AS user_alliance, m.verified AS member_verified
+                FROM member_cert_requests r
+                LEFT JOIN users u ON u.id = r.user_id
+                LEFT JOIN members m ON m.id = r.member_id
+                WHERE r.id = ?
+                """,
+                (request_id,),
+            ).fetchone()
+            if not row:
+                self.send_json({"error": "申请不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if current.get("user", {}).get("role") == ROLE_ALLIANCEADMIN and row["alliance"] != user.get("alliance", ""):
+                self.send_json({"error": "只能审核本联盟的认证申请"}, status=HTTPStatus.FORBIDDEN)
+                return
+            if action == "approve":
+                if int(row["member_verified"] or 0) == 1:
+                    self.send_json({"error": "该成员已经认证"}, status=HTTPStatus.CONFLICT)
+                    return
+                timestamp = now_text()
+                connection.execute(
+                    "UPDATE members SET verified = 1, updated_at = ? WHERE id = ?",
+                    (timestamp, row["member_id"]),
+                )
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET member_id = ?, member = ?, role = ?, alliance = ?
+                    WHERE id = ?
+                    """,
+                    (row["member_id"], row["member_id"], ROLE_VERIFIEDUSER, row["alliance"], row["user_id"]),
+                )
+                update_user_sessions_for_user(
+                    row["user_id"],
+                    member_id=row["member_id"],
+                    member=row["member_id"],
+                    role=ROLE_VERIFIEDUSER,
+                    alliance=row["alliance"],
+                )
+                connection.execute(
+                    """
+                    UPDATE member_cert_requests
+                    SET status = 'approved', reviewed_at = ?, reviewer_id = ?
+                    WHERE id = ?
+                    """,
+                    (timestamp, user.get("id"), request_id),
+                )
+                connection.commit()
+                self.send_json({"message": "认证申请已通过"})
+                return
+            timestamp = now_text()
+            connection.execute(
+                """
+                UPDATE member_cert_requests
+                SET status = 'rejected', reviewed_at = ?, reviewer_id = ?
+                WHERE id = ?
+                """,
+                (timestamp, user.get("id"), request_id),
+            )
+            connection.commit()
+        self.send_json({"message": "认证申请已拒绝"})
+
+    def list_admin_role_requests(self):
+        with open_db() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.*, u.username, u.email, u.role AS current_role
+                FROM admin_role_requests r
+                LEFT JOIN users u ON u.id = r.user_id
+                WHERE r.status = 'pending'
+                ORDER BY r.id DESC
+                """
+            ).fetchall()
+        return {
+            "items": [
+                {
+                    "id": row["id"],
+                    "user_id": row["user_id"],
+                    "username": row["username"],
+                    "email": row["email"],
+                    "current_role": row["current_role"],
+                    "alliance": row["alliance"],
+                    "status": row["status"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
+        }
+
+    def create_admin_role_request(self, current, payload):
+        user = current.get("user") or {}
+        alliance = str(payload.get("alliance", "")).strip()
+        if not alliance:
+            self.send_json({"error": "请选择联盟"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        with open_db() as connection:
+            known_alliances = set(self.get_known_alliances(connection))
+            if alliance not in known_alliances:
+                self.send_json({"error": "联盟不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            row = connection.execute("SELECT role, alliance FROM users WHERE id = ?", (user.get("id"),)).fetchone()
+            if not row:
+                self.send_json({"error": "用户不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if row["role"] in {ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN}:
+                self.send_json({"error": "当前角色无需再次申请"}, status=HTTPStatus.CONFLICT)
+                return
+            exists = connection.execute(
+                """
+                SELECT id FROM admin_role_requests
+                WHERE user_id = ? AND status = 'pending'
+                """,
+                (user.get("id"),),
+            ).fetchone()
+            if exists:
+                self.send_json({"error": "你已经有待审核的申请"}, status=HTTPStatus.CONFLICT)
+                return
+            timestamp = now_text()
+            connection.execute(
+                """
+                INSERT INTO admin_role_requests (user_id, alliance, status, created_at)
+                VALUES (?, ?, 'pending', ?)
+                """,
+                (user.get("id"), alliance, timestamp),
+            )
+            connection.commit()
+        self.send_json({"message": "联盟管理员申请已提交"}, status=HTTPStatus.CREATED)
+
+    def review_admin_role_request(self, request_id, payload, current):
+        action = str(payload.get("action", "")).strip().lower()
+        if action not in {"approve", "reject"}:
+            self.send_json({"error": "操作无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if not str(request_id).isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        with open_db() as connection:
+            row = connection.execute(
+                """
+                SELECT r.*, u.username, u.role AS current_role
+                FROM admin_role_requests r
+                LEFT JOIN users u ON u.id = r.user_id
+                WHERE r.id = ?
+                """,
+                (request_id,),
+            ).fetchone()
+            if not row:
+                self.send_json({"error": "申请不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if action == "approve":
+                timestamp = now_text()
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET role = ?, alliance = ?
+                    WHERE id = ?
+                    """,
+                    (ROLE_ALLIANCEADMIN, row["alliance"], row["user_id"]),
+                )
+                update_user_sessions_for_user(
+                    row["user_id"],
+                    role=ROLE_ALLIANCEADMIN,
+                    alliance=row["alliance"],
+                    is_admin=False,
+                )
+                connection.execute(
+                    """
+                    UPDATE admin_role_requests
+                    SET status = 'approved', reviewed_at = ?, reviewer_id = ?
+                    WHERE id = ?
+                    """,
+                    (timestamp, current.get("user", {}).get("id"), request_id),
+                )
+                connection.commit()
+                self.send_json({"message": "联盟管理员申请已通过"})
+                return
+            timestamp = now_text()
+            connection.execute(
+                """
+                UPDATE admin_role_requests
+                SET status = 'rejected', reviewed_at = ?, reviewer_id = ?
+                WHERE id = ?
+                """,
+                (timestamp, current.get("user", {}).get("id"), request_id),
+            )
+            connection.commit()
+        self.send_json({"message": "联盟管理员申请已拒绝"})
+
     def get_current_user_profile(self):
         current = get_current_auth(self)
         if not current.get("authenticated"):
@@ -1502,7 +1951,7 @@ class AllianceHandler(BaseHTTPRequestHandler):
                 """
                 SELECT m.*
                 FROM users u
-                LEFT JOIN members m ON m.id = u.member_id
+                LEFT JOIN members m ON m.id = COALESCE(u.member_id, u.member)
                 WHERE u.id = ?
                 """,
                 (user_id,),
@@ -1591,6 +2040,35 @@ class AllianceHandler(BaseHTTPRequestHandler):
             return None
         return current["user"]
 
+    def has_permission(self, user, permission):
+        if not user:
+            return False
+        if user.get("role") == ROLE_SUPERADMIN or user.get("is_admin"):
+            return True
+        return permission in set(user.get("permissions") or [])
+
+    def can_access_alliance(self, user, alliance_name, permission):
+        if not self.has_permission(user, permission):
+            return False
+        if user.get("role") == ROLE_SUPERADMIN or user.get("is_admin"):
+            return True
+        return str(user.get("alliance") or "").strip() == str(alliance_name or "").strip()
+
+    def require_permission(self, permission, alliance_name=None, allow_admin_account=True):
+        current = get_current_auth(self)
+        if not current.get("authenticated"):
+            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            return None
+        user = current.get("user") or {}
+        if not allow_admin_account and current.get("is_admin"):
+            self.send_json({"error": "当前账号不能执行该操作"}, status=HTTPStatus.FORBIDDEN)
+            return None
+        allowed = self.has_permission(user, permission) if alliance_name is None else self.can_access_alliance(user, alliance_name, permission)
+        if not allowed:
+            self.send_json({"error": "当前账号没有执行该操作的权限"}, status=HTTPStatus.FORBIDDEN)
+            return None
+        return user
+
     def require_normal_user(self):
         current = get_current_auth(self)
         if not current.get("authenticated"):
@@ -1613,6 +2091,18 @@ class AllianceHandler(BaseHTTPRequestHandler):
         if not current.get("authenticated"):
             return None
         return current["user"]
+
+    def get_guild_registry_item(self, guild_key):
+        with open_db() as connection:
+            row = connection.execute("SELECT * FROM guild_registry WHERE guild_key = ?", (guild_key,)).fetchone()
+        return dict(row) if row else None
+
+    def get_member_item(self, member_id):
+        if not str(member_id).isdigit():
+            return None
+        with open_db() as connection:
+            row = connection.execute("SELECT * FROM members WHERE id = ?", (int(member_id),)).fetchone()
+        return dict(row) if row else None
 
     def read_session_token(self):
         cookie_header = self.headers.get("Cookie")
@@ -1714,6 +2204,7 @@ def serialize_member(member):
         "damage_reduction": member.get("damage_reduction", 0),
         "pet": member["pet"],
         "note": member["note"],
+        "verified": bool(member.get("verified", 0)),
         "screenshot_url": member.get("screenshot_path", ""),
         "has_screenshot": bool(member.get("screenshot_path")),
         "created_at": member.get("created_at"),

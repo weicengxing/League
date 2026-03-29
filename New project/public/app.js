@@ -63,7 +63,7 @@ function handleNewMelonPost(item) {
   renderAdminAnnouncements();
   // Show notification (only for real items, not temp ones)
   if (!String(item.id).startsWith('temp_')) {
-    toast(`新瓜棚动态: ${item.title}`);
+    toast(`新瓜动态：${item.title}`);
   }
 }
 
@@ -72,7 +72,7 @@ async function handleMelonNewEvent(eventData) {
   const alreadyPresent = melonId ? state.announcements.some((item) => String(item.id) === melonId) : false;
   await fetchAnnouncements();
   if (!alreadyPresent) {
-    toast(eventData?.title ? `新瓜棚动态: ${eventData.title}` : "有新的瓜棚动态");
+    toast(eventData?.title ? `新瓜动态：${eventData.title}` : "有新的瓜动态");
   }
 }
 
@@ -101,6 +101,10 @@ const state = {
   members: [],
   announcements: [],
   me: { authenticated: false, user: null, is_admin: false },
+  roleRequests: [],
+  memberRequests: [],
+  myMemberRequests: [],
+  selectedMemberCertId: null,
   currentView: "guilds",
   selectedGuild: null,
   search: "",
@@ -145,6 +149,16 @@ const els = {
   backTopBtn: document.querySelector("#backTopBtn"),
   rankingGuildFilter: document.querySelector("#rankingGuildFilter"),
   sortSelect: document.querySelector("#sortSelect"),
+  roleRequestBtn: document.querySelector("#roleRequestBtn"),
+  certRequestBtn: document.querySelector("#certRequestBtn"),
+  roleApplyBtn: document.querySelector("#roleApplyBtn"),
+  roleRequestModal: document.querySelector("#roleRequestModal"),
+  roleRequestList: document.querySelector("#roleRequestList"),
+  roleApplyModal: document.querySelector("#roleApplyModal"),
+  roleApplyForm: document.querySelector("#roleApplyForm"),
+  roleApplyAlliance: document.querySelector("#roleApplyAlliance"),
+  certRequestModal: document.querySelector("#certRequestModal"),
+  certRequestList: document.querySelector("#certRequestList"),
   loginForm: document.querySelector("#loginForm"),
   logoutBtn: document.querySelector("#logoutBtn"),
   loginState: document.querySelector("#loginState"),
@@ -219,17 +233,88 @@ const els = {
 setupUserProfileUI();
 setupGuildEditUI();
 setupMemberEditUI();
+ensureRoleUi();
 bindEvents();
 boot();
+
+function ensureRoleUi() {
+  if (!document.querySelector("#roleApplyBtn")) {
+    const topActions = document.createElement("div");
+    topActions.className = "board-top__actions";
+    topActions.innerHTML = `
+      <button id="roleApplyBtn" type="button" class="ghost-btn action-btn--apply">申请联盟管理员</button>
+      <button id="roleRequestBtn" type="button" class="ghost-btn action-btn--approve">
+        申请列表<span id="roleRequestBadge" class="btn-badge hidden">0</span>
+      </button>
+      <button id="certRequestBtn" type="button" class="ghost-btn action-btn--approve">认证申请</button>
+    `;
+    document.querySelector(".board-top")?.appendChild(topActions);
+  }
+
+  if (!document.querySelector("#roleApplyModal")) {
+    document.body.insertAdjacentHTML("beforeend", `
+      <div id="roleApplyModal" class="modal hidden">
+        <div class="modal__backdrop" data-close-modal="role-apply"></div>
+        <div class="modal__dialog">
+          <div class="modal__head">
+            <h3>申请联盟管理员</h3>
+            <button type="button" class="ghost-btn" data-close-modal="role-apply">关闭</button>
+          </div>
+          <form id="roleApplyForm" class="stack-form modal-form">
+            <label>
+              <span>目标联盟</span>
+              <select id="roleApplyAlliance"></select>
+            </label>
+            <div class="modal-actions">
+              <button type="button" class="ghost-btn" data-close-modal="role-apply">取消</button>
+              <button type="submit" class="primary-btn">提交申请</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div id="roleRequestModal" class="modal hidden">
+        <div class="modal__backdrop" data-close-modal="role-request"></div>
+        <div class="modal__dialog modal__dialog--wide">
+          <div class="modal__head">
+            <h3>联盟管理员申请列表</h3>
+            <button type="button" class="ghost-btn" data-close-modal="role-request">关闭</button>
+          </div>
+          <div id="roleRequestList" class="modal__body"></div>
+        </div>
+      </div>
+      <div id="certRequestModal" class="modal hidden">
+        <div class="modal__backdrop" data-close-modal="cert-request"></div>
+        <div class="modal__dialog modal__dialog--wide">
+          <div class="modal__head">
+            <h3>成员认证申请</h3>
+            <button type="button" class="ghost-btn" data-close-modal="cert-request">关闭</button>
+          </div>
+          <div id="certRequestList" class="modal__body"></div>
+        </div>
+      </div>
+    `);
+  }
+
+  els.roleApplyBtn = document.querySelector("#roleApplyBtn");
+  els.roleRequestBtn = document.querySelector("#roleRequestBtn");
+  els.certRequestBtn = document.querySelector("#certRequestBtn");
+  els.roleApplyModal = document.querySelector("#roleApplyModal");
+  els.roleRequestModal = document.querySelector("#roleRequestModal");
+  els.certRequestModal = document.querySelector("#certRequestModal");
+  els.roleApplyForm = document.querySelector("#roleApplyForm");
+  els.roleApplyAlliance = document.querySelector("#roleApplyAlliance");
+  els.roleRequestList = document.querySelector("#roleRequestList");
+  els.certRequestList = document.querySelector("#certRequestList");
+}
 
 function setupUserProfileUI() {
   els.viewButtons = [...document.querySelectorAll(".top-pills__btn")];
   els.viewPanels = [...document.querySelectorAll(".board-panel")];
 
   for (const [element, placeholder] of [
-    [document.querySelector("#memberGuildPower"), "支持小数，可写 26万亿"],
-    [els.memberEditPower, "支持小数，可写 4538.99万"],
-    [els.memberEditSpeed, "支持小数，可写 1.58万"],
+    [document.querySelector("#memberGuildPower"), "支持小数，可写 26 万亿"],
+    [els.memberEditPower, "支持小数，可写 4538.99 万"],
+    [els.memberEditSpeed, "支持小数，可写 1.58 万"],
     [els.memberEditBonusDamage, "支持小数，可写 657.6"],
     [els.memberEditDamageReduction, "支持小数，可写 686.7"],
   ]) {
@@ -241,32 +326,6 @@ function setupUserProfileUI() {
 }
 
 function setupGuildEditUI() {
-  if (els.guildEditModal) {
-    const dialog = els.guildEditModal.querySelector(".modal__dialog");
-    if (dialog) {
-      dialog.innerHTML = `
-        <div class="modal__head">
-          <h3 id="guildEditTitle">编辑妖盟</h3>
-          <button type="button" class="ghost-btn" data-close-modal="guild-edit">关闭</button>
-        </div>
-        <form id="guildEditForm" class="member-form">
-          <input type="hidden" id="guildEditKey">
-          <input type="hidden" id="guildEditLeaderId">
-          <label>联盟<input id="guildEditAlliance" type="text" readonly></label>
-          <label>山头号<input id="guildEditCode" type="text" readonly></label>
-          <label>山名字号<input id="guildEditPrefix" type="text" readonly></label>
-          <label>妖盟总战力<input id="guildEditPower" type="text" inputmode="decimal" placeholder="支持小数，可写 26万亿"></label>
-          <label>妖盟名称<input id="guildEditName" type="text" required></label>
-          <label>盟主昵称<input id="guildEditLeader" type="text" placeholder="可留空"></label>
-          <div class="modal__actions full">
-            <button type="button" class="ghost-btn" data-close-modal="guild-edit">取消</button>
-            <button type="submit" class="primary-btn">保存修改</button>
-          </div>
-        </form>
-      `;
-    }
-  }
-
   els.guildEditForm = document.querySelector("#guildEditForm");
   els.guildEditKey = document.querySelector("#guildEditKey");
   els.guildEditLeaderId = document.querySelector("#guildEditLeaderId");
@@ -285,38 +344,11 @@ function setupGuildEditUI() {
   }
   if (els.guildEditPower) {
     els.guildEditPower.setAttribute("inputmode", "decimal");
-    els.guildEditPower.setAttribute("placeholder", "支持小数，可写 26万亿");
+    els.guildEditPower.setAttribute("placeholder", "支持小数，可写 26 万亿");
   }
   if (els.guildEditLeader) {
     els.guildEditLeader.removeAttribute("required");
     els.guildEditLeader.setAttribute("placeholder", "可留空");
-  }
-
-  if (!document.querySelector("#hillEditModal")) {
-    document.body.insertAdjacentHTML(
-      "beforeend",
-      `
-        <div id="hillEditModal" class="modal hidden">
-          <div class="modal__backdrop" data-close-modal="hill-edit"></div>
-          <div class="modal__dialog">
-            <div class="modal__head">
-              <h3>编辑联盟名称</h3>
-              <button type="button" class="ghost-btn" data-close-modal="hill-edit">关闭</button>
-            </div>
-            <form id="hillEditForm" class="member-form">
-              <input type="hidden" id="hillEditOldName">
-              <label>当前联盟名称<input id="hillEditCurrentName" type="text" readonly></label>
-              <label>新的联盟名称<input id="hillEditName" type="text" required></label>
-              <div class="modal__actions full">
-                <button type="button" id="hillDeleteBtn" class="ghost-btn">删除整个联盟</button>
-                <button type="button" class="ghost-btn" data-close-modal="hill-edit">取消</button>
-                <button type="submit" class="primary-btn">保存联盟名称</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      `,
-    );
   }
 
   els.hillEditModal = document.querySelector("#hillEditModal");
@@ -341,36 +373,6 @@ function setupGuildEditUI() {
 }
 
 function setupMemberEditUI() {
-  if (els.memberEditModal) {
-    const dialog = els.memberEditModal.querySelector(".modal__dialog");
-    if (dialog) {
-      dialog.innerHTML = `
-        <div class="modal__head">
-          <h3 id="memberEditTitle">编辑成员</h3>
-          <button type="button" class="ghost-btn" data-close-modal="member-edit">关闭</button>
-        </div>
-        <form id="memberEditForm" class="member-form">
-          <input type="hidden" id="memberEditId">
-          <input type="hidden" id="memberEditGuildKey">
-          <label>联盟名称<input id="memberEditAlliance" type="text" readonly></label>
-          <label>所属妖盟<input id="memberEditGuildDisplay" type="text" readonly></label>
-          <label>成员昵称<input id="memberEditName" type="text" required></label>
-          <label>等级<input id="memberEditRole" type="text" placeholder="例如 1200级" required></label>
-          <label>境界<input id="memberEditRealm" type="text" required></label>
-          <label>战力<input id="memberEditPower" type="text" inputmode="decimal" placeholder="支持小数，可写 10万亿" required></label>
-          <label>敏捷<input id="memberEditSpeed" type="text" inputmode="decimal" placeholder="可留空，支持 1万亿"></label>
-          <label>灵兽<input id="memberEditPet" type="text" required></label>
-          <label>增伤<input id="memberEditBonusDamage" type="text" inputmode="decimal" placeholder="可留空，支持小数"></label>
-          <label>减伤<input id="memberEditDamageReduction" type="text" inputmode="decimal" placeholder="可留空，支持小数"></label>
-          <div class="modal__actions full">
-            <button type="button" class="ghost-btn" data-close-modal="member-edit">取消</button>
-            <button type="submit" class="primary-btn">保存成员</button>
-          </div>
-        </form>
-      `;
-    }
-  }
-
   els.memberEditForm = document.querySelector("#memberEditForm");
   els.memberEditTitle = document.querySelector("#memberEditTitle");
   els.memberEditId = document.querySelector("#memberEditId");
@@ -466,6 +468,10 @@ function bindEvents() {
     await refreshAll();
     toast("数据已刷新");
   });
+  els.roleApplyBtn?.addEventListener("click", openRoleApplyModal);
+  els.roleApplyForm?.addEventListener("submit", submitRoleApplyForm);
+  els.roleRequestBtn?.addEventListener("click", openRoleRequestModal);
+  els.certRequestBtn?.addEventListener("click", () => openCertRequestModal());
   els.memberForm?.addEventListener("submit", handleMemberSubmit);
   els.resetMemberBtn?.addEventListener("click", resetMemberForm);
   els.guildEditForm?.addEventListener("submit", handleGuildEditSubmit);
@@ -480,13 +486,13 @@ function bindEvents() {
   document.addEventListener("click", handleModalDismiss);
   document.addEventListener("keydown", handleModalKeydown);
   
-  // 瓜棚发布表单
+  // 鐡滄鍙戝竷琛ㄥ崟
   const melonPostForm = document.querySelector("#melonPostForm");
   if (melonPostForm) {
     melonPostForm.addEventListener("submit", handleMelonPostSubmit);
   }
   
-  // 瓜棚撤回按钮
+  // 鐡滄鎾ゅ洖鎸夐挳
   document.addEventListener("click", (event) => {
     const revokeBtn = event.target.closest("[data-melon-revoke]");
     if (revokeBtn instanceof HTMLElement) {
@@ -496,8 +502,18 @@ function bindEvents() {
       }
     }
   });
+  document.addEventListener("click", async (event) => {
+    const requestAction = event.target.closest("[data-request-action]");
+    if (!(requestAction instanceof HTMLElement)) return;
+    await reviewMemberRequest(requestAction.dataset.id, requestAction.dataset.requestAction);
+  });
+  document.addEventListener("click", async (event) => {
+    const roleAction = event.target.closest("[data-role-request-action]");
+    if (!(roleAction instanceof HTMLElement)) return;
+    await reviewRoleRequest(roleAction.dataset.id, roleAction.dataset.roleRequestAction);
+  });
   
-  // 创建隐藏的文件输入框用于Excel导入
+  // 鍒涘缓闅愯棌鐨勬枃浠惰緭鍏ユ鐢ㄤ簬Excel瀵煎叆
   const excelInput = document.createElement("input");
   excelInput.type = "file";
   excelInput.accept = ".xlsx,.xls";
@@ -509,7 +525,9 @@ function bindEvents() {
 
 async function boot() {
   try {
-    await refreshAll();
+    await fetchMe();
+    await loadDashboard();
+    await Promise.all([fetchMembers(), fetchAnnouncements()]);
     connectMelonWebSocket();
   } catch (error) {
     console.error(error);
@@ -627,9 +645,9 @@ async function handleMelonRevoke(melonId) {
 }
 
 async function refreshAll() {
+  await fetchMe();
   await loadDashboard();
   await Promise.all([fetchMembers(), fetchAnnouncements()]);
-  await fetchMe();
 }
 
 async function request(url, options = {}) {
@@ -678,16 +696,87 @@ async function fetchAnnouncements() {
 
 async function fetchMe() {
   state.me = await request("/api/auth/me");
+  if (state.me.authenticated) {
+    await loadMyMemberRequests();
+    if (currentUserRole() === "SuperAdmin") {
+      try {
+        await loadRoleRequests();
+      } catch {
+        state.roleRequests = [];
+      }
+    } else {
+      state.roleRequests = [];
+    }
+  } else {
+    state.myMemberRequests = [];
+    state.memberRequests = [];
+    state.roleRequests = [];
+  }
   renderAuth();
   renderFeeds();
   renderAdminAnnouncements();
+}
+
+async function loadMyMemberRequests() {
+  try {
+    const data = await request("/api/member-cert-requests/mine");
+    state.myMemberRequests = data.items || [];
+  } catch {
+    state.myMemberRequests = [];
+  }
+}
+
+function getAllianceOptions() {
+  return [...new Set((state.dashboard?.hills || []).map((hill) => hill.name).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
+function renderAllianceSelectOptions(selectedValue = "") {
+  const alliances = getAllianceOptions();
+  return [
+    `<option value="">请选择联盟</option>`,
+    ...alliances.map((alliance) => `<option value="${escapeHtml(alliance)}" ${alliance === selectedValue ? "selected" : ""}>${escapeHtml(alliance)}</option>`),
+  ].join("");
+}
+
+function currentUserRole() {
+  return state.me?.authenticated ? (state.me.user?.role || "Guest") : "Guest";
+}
+
+function currentPermissions() {
+  return Array.isArray(state.me?.permissions)
+    ? state.me.permissions
+    : Array.isArray(state.me?.user?.permissions)
+      ? state.me.user.permissions
+      : [];
+}
+
+function hasPermission(permission) {
+  return currentUserRole() === "SuperAdmin" || currentPermissions().includes(permission);
+}
+
+function canManageAlliance(allianceName) {
+  if (!state.me?.authenticated || !hasPermission("manage_members")) {
+    return false;
+  }
+  if (currentUserRole() === "SuperAdmin") {
+    return true;
+  }
+  const managedAlliance = String(state.me.user?.alliance || "").trim();
+  const targetAlliance = String(allianceName || "").trim();
+  return Boolean(managedAlliance) && managedAlliance === targetAlliance;
+}
+
+async function loadRoleRequests() {
+  const data = await request("/api/admin-role-requests");
+  state.roleRequests = data.items || [];
 }
 
 function renderDashboard() {
   const hills = getDerivedHills();
   const guildCount = hills.reduce((sum, hill) => sum + hill.guilds.length, 0);
   if (els.allianceName) {
-    els.allianceName.textContent = state.dashboard?.alliance_name || "🔮联盟";
+    els.allianceName.textContent = state.dashboard?.alliance_name || "默认联盟";
   }
   if (els.memberCount) {
     els.memberCount.textContent = `${state.members.length || state.dashboard?.member_count || 0} 名成员`;
@@ -807,7 +896,7 @@ function renderGuildSummary() {
   els.guildSummary.innerHTML = hills.map((hill) => `
     <section class="hill-section">
       <header class="hill-section__head">
-        <h2>🔮 ${escapeHtml(hill.name)}</h2>
+        <h2>${escapeHtml(hill.name)}</h2>
       </header>
       <div class="guild-card-grid">
         ${getPagedGuilds(hill).items.map((guild) => renderGuildCard(guild)).join("")}
@@ -824,23 +913,23 @@ function renderGuildCard(guild) {
       <div class="guild-card__badge">${guild.count}人</div>
       <div class="guild-card__title-row">
         <h3>${escapeHtml(guild.displayName)}</h3>
-        <span class="guild-card__mark">${guild.rank <= 3 ? "🌟" : "🔸"}</span>
+        <span class="guild-card__mark">${guild.rank <= 3 ? "TOP" : `NO.${guild.rank}`}</span>
       </div>
-      <p class="guild-card__power-label">总战力: <strong>${formatNumber(getGuildPower(guild))}</strong></p>
+      <p class="guild-card__power-label">总战力 <strong>${formatNumber(getGuildPower(guild))}</strong></p>
       <div class="guild-card__leaders">
         <div class="guild-card__leader">
-          <span>🏆 车头1:</span>
+          <span>车头1：</span>
           <strong>${first ? escapeHtml(first.name) : "暂无"}</strong>
           <b>${first ? formatNumber(first.power) : "-"}</b>
         </div>
         <div class="guild-card__leader">
-          <span>🥈 车头2:</span>
+          <span>车头2：</span>
           <strong>${second ? escapeHtml(second.name) : "暂无"}</strong>
           <b>${second ? formatNumber(second.power) : "-"}</b>
         </div>
       </div>
-      <p class="guild-card__update">最后更新: ${escapeHtml(guild.updatedAt || "暂无记录")}</p>
-      <button type="button" class="guild-card__action" data-open-guild="${escapeHtml(guild.key)}">查看妖盟全成员战力</button>
+      <p class="guild-card__update">最后更新：${escapeHtml(guild.updatedAt || "暂无记录")}</p>
+      <button type="button" class="guild-card__action" data-open-guild="${escapeHtml(guild.key)}">查看妖盟成员</button>
     </article>
   `;
 }
@@ -849,7 +938,7 @@ function renderGuildDetail() {
   if (!els.guildDetailList || !els.guildDetailTitle || !els.guildDetailMeta) return;
   if (!state.selectedGuild) {
     els.guildDetailTitle.textContent = "妖盟详情";
-    els.guildDetailMeta.textContent = "点击妖盟卡片可查看完整成员信息。";
+    els.guildDetailMeta.textContent = "点击妖盟卡片查看完整成员信息";
     if (els.guildDetailActions) els.guildDetailActions.innerHTML = "";
     if (els.guildDetailSearch) els.guildDetailSearch.value = "";
     if (els.guildDetailRoleFilter) els.guildDetailRoleFilter.innerHTML = `<option value="all">全部等级</option>`;
@@ -860,7 +949,7 @@ function renderGuildDetail() {
   const detail = getGuildDetail(state.selectedGuild);
   if (!detail) {
     els.guildDetailTitle.textContent = "妖盟详情";
-    els.guildDetailMeta.textContent = "当前妖盟未找到。";
+    els.guildDetailMeta.textContent = "当前妖盟未找到";
     if (els.guildDetailActions) els.guildDetailActions.innerHTML = "";
     if (els.guildDetailSearch) els.guildDetailSearch.value = "";
     if (els.guildDetailRoleFilter) els.guildDetailRoleFilter.innerHTML = `<option value="all">全部等级</option>`;
@@ -871,11 +960,19 @@ function renderGuildDetail() {
   els.guildDetailTitle.textContent = detail.name;
   els.guildDetailMeta.textContent = `${detail.hill} · ${detail.members.length} 名成员 · 总战力 ${formatNumber(detail.power)}`;
   renderGuildDetailFilters(detail.members);
+  const detailAlliance = detail.members[0]?.alliance || detail.hill || "";
+  const canManageCurrentGuild = canManageAlliance(detailAlliance);
   if (els.guildDetailActions) {
-    els.guildDetailActions.innerHTML = state.me.is_admin
-      ? `<button type="button" class="primary-btn" data-action="import-excel">导入Excel</button>
+    els.guildDetailActions.innerHTML = canManageCurrentGuild
+      ? `<button type="button" class="primary-btn" data-action="import-excel">导入 Excel</button>
          <button type="button" class="ghost-btn" data-action="add-member">新增成员</button>`
-      : `<button type="button" class="ghost-btn" data-action="go-login">登录后管理成员</button>`;
+      : `<button type="button" class="ghost-btn" data-action="go-login">登录后可申请认证</button>`;
+  }
+  if (els.guildDetailActions && state.me.authenticated && !canManageCurrentGuild) {
+    const toolbarLabel = currentUserRole() === "AllianceAdmin"
+      ? "已登录，可在下方审核成员认证"
+      : "已登录，可在下方申请成员认证";
+    els.guildDetailActions.innerHTML = `<span class="detail-toolbar-note">${toolbarLabel}</span>`;
   }
   const filteredMembers = getFilteredGuildMembers(detail.members);
   if (!filteredMembers.length) {
@@ -893,8 +990,11 @@ function renderGuildDetail() {
             <div class="detail-member-card__top">
               <div>
                 <strong>${escapeHtml(member.name)}</strong>
-                <p>等级 ${escapeHtml(member.role || "-")} · ${escapeHtml(member.realm)}</p>
+                <p>等级 ${escapeHtml(member.role || "-")} · ${escapeHtml(member.realm || "-")}</p>
               </div>
+            </div>
+            <div class="detail-member-card__status">
+              ${renderMemberVerificationState(member)}
             </div>
             <div class="detail-member-card__stats">
               <span>境界 ${escapeHtml(member.realm || "-")}</span>
@@ -915,7 +1015,7 @@ function renderGuildDetail() {
             `}
           </div>
         </div>
-        ${state.me.is_admin ? `
+        ${canManageAlliance(detail.alliance || detail.hill || "") ? `
           <div class="detail-member-card__actions">
             <button type="button" class="action-btn action-btn--upload" data-action="upload-screenshot" data-id="${member.id}">${member.screenshot_url ? "替换截图" : "上传截图"}</button>
             ${member.screenshot_url ? `<button type="button" class="action-btn action-btn--preview" data-action="preview-screenshot" data-id="${member.id}">预览截图</button>` : ""}
@@ -1177,7 +1277,7 @@ function renderRanking() {
     const fragment = els.rankingItemTemplate.content.cloneNode(true);
     fragment.querySelector(".ranking-item__index").textContent = String((page.currentPage - 1) * page.pageSize + index + 1);
     fragment.querySelector(".ranking-item__name").textContent = member.name;
-    fragment.querySelector(".ranking-item__meta").textContent = `${member.hill || "默认联盟"} · ${getGuildDisplayName(member)} · 等级 ${member.role || "-"} · ${member.realm}`;
+    fragment.querySelector(".ranking-item__meta").textContent = `${member.hill || "默认联盟"} · ${getGuildDisplayName(member)} · 等级 ${member.role || "-"} · ${member.realm || "-"}`;
     fragment.querySelector(".ranking-item__power").textContent = formatNumber(member.power);
     els.rankingList.appendChild(fragment);
   });
@@ -1185,8 +1285,8 @@ function renderRanking() {
 }
 
 function renderFeeds() {
-  const announcements = state.announcements.filter((item) => item.category === "公告");
-  const melonPosts = state.announcements.filter((item) => item.category === "瓜棚");
+  const announcements = state.announcements.filter((item) => ["公告", "鍏憡"].includes(item.category));
+  const melonPosts = state.announcements.filter((item) => ["瓜棚", "鐡滄"].includes(item.category));
   if (els.announcementList) {
     els.announcementList.innerHTML = renderFeedGroup(announcements, "暂无公告内容");
   }
@@ -1198,14 +1298,14 @@ function renderFeeds() {
 function renderFeedGroup(items, emptyText) {
   if (!items.length) return `<article class="empty-card">${emptyText}</article>`;
   return items.map((item) => {
-    // 计算是否在2分钟内可撤回
+    // 璁＄畻鏄惁鍦?鍒嗛挓鍐呭彲鎾ゅ洖
     let canRevoke = false;
     if (item.created_at && state.me.authenticated) {
       const createdTime = new Date(item.created_at.replace(' ', 'T'));
       const now = new Date();
-      const elapsed = (now - createdTime) / 1000; // 秒
-      canRevoke = elapsed <= 120; // 2分钟 = 120秒
-      // 检查是否是发布者本人
+      const elapsed = (now - createdTime) / 1000; // 绉?
+      canRevoke = elapsed <= 120; // 2鍒嗛挓 = 120绉?
+      // 妫€鏌ユ槸鍚︽槸鍙戝竷鑰呮湰浜?
       const currentUsername = state.me.user?.username || state.me.user?.display_name || "";
       if (item.author !== currentUsername) {
         canRevoke = false;
@@ -1215,29 +1315,207 @@ function renderFeedGroup(items, emptyText) {
       <article class="feed-item" data-melon-id="${item.id}">
         <strong>${escapeHtml(item.title)}</strong>
         <p>${escapeHtml(item.content)}</p>
-        <small>${escapeHtml(item.created_at || "")}${item.author ? ' · ' + escapeHtml(item.author) : ''}</small>
-        ${canRevoke ? `<button type="button" class="melon-revoke-btn" data-melon-revoke="${item.id}">撤回</button>` : ''}
+        <small>${escapeHtml(item.created_at || "")}${item.author ? " · " + escapeHtml(item.author) : ""}</small>
+        ${canRevoke ? `<button type="button" class="melon-revoke-btn" data-melon-revoke="${item.id}">撤回</button>` : ""}
       </article>
     `;
   }).join("");
 }
 
+function hasPendingMemberRequest(memberId) {
+  return state.myMemberRequests.some((request) => String(request.member_id) === String(memberId) && request.status === "pending");
+}
+
+function renderMemberVerificationState(member) {
+  if (member?.verified) {
+    return `<span class="member-status member-status--verified">已认证</span>`;
+  }
+  if (currentUserRole() === "AllianceAdmin" && canManageAlliance(member.alliance || member.hill || "")) {
+    return `<button type="button" class="action-btn action-btn--approve" data-action="open-member-cert" data-id="${member.id}">认证</button>`;
+  }
+  if (currentUserRole() === "Guest") {
+    if (hasPendingMemberRequest(member.id)) {
+      return `<span class="member-status member-status--pending">申请中</span>`;
+    }
+    return `<button type="button" class="action-btn action-btn--apply" data-action="apply-cert" data-id="${member.id}">申请认证</button>`;
+  }
+  return `<span class="member-status member-status--pending">未认证</span>`;
+}
+
+async function openCertRequestModal(memberId = null) {
+  if (!els.certRequestModal || !els.certRequestList) return;
+  try {
+    state.selectedMemberCertId = memberId ? String(memberId) : null;
+    const query = state.selectedMemberCertId ? `?member_id=${encodeURIComponent(state.selectedMemberCertId)}` : "";
+    const data = await request(`/api/member-cert-requests${query}`);
+    state.memberRequests = data.items || [];
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  renderCertRequestList();
+  els.certRequestModal.classList.remove("hidden");
+}
+
+function closeCertRequestModal() {
+  els.certRequestModal?.classList.add("hidden");
+  state.selectedMemberCertId = null;
+}
+
+function renderCertRequestList() {
+  if (!els.certRequestList) return;
+  const items = state.selectedMemberCertId
+    ? state.memberRequests.filter((item) => String(item.member_id) === String(state.selectedMemberCertId))
+    : state.memberRequests;
+  if (!items.length) {
+    els.certRequestList.innerHTML = `<article class="empty-card">暂无待审核申请。</article>`;
+    return;
+  }
+  els.certRequestList.innerHTML = items.map((item) => `
+    <article class="request-item">
+      <div class="request-item__body">
+        <strong>${escapeHtml(item.display_name || item.username || "-")}</strong>
+        <p>${escapeHtml(item.member_name || "-")} 路 ${escapeHtml(item.guild_name || "-")} 路 ${escapeHtml(item.alliance || "-")}</p>
+        <small>${escapeHtml(item.created_at || "")}</small>
+      </div>
+      <div class="request-item__actions">
+        <button type="button" class="action-btn action-btn--approve" data-request-action="approve" data-id="${item.id}">同意</button>
+        <button type="button" class="action-btn action-btn--reject" data-request-action="reject" data-id="${item.id}">拒绝</button>
+      </div>
+    </article>
+  `).join("");
+}
+
+async function reviewMemberRequest(requestId, action) {
+  if (!requestId || !action) return;
+  try {
+    await request(`/api/member-cert-requests/${requestId}`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+    await loadMyMemberRequests();
+    await openCertRequestModal(state.selectedMemberCertId);
+    toast(action === "approve" ? "申请已通过" : "申请已拒绝");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function openRoleApplyModal() {
+  if (!els.roleApplyModal || !els.roleApplyAlliance) return;
+  els.roleApplyAlliance.innerHTML = renderAllianceSelectOptions();
+  els.roleApplyModal.classList.remove("hidden");
+}
+
+function closeRoleApplyModal() {
+  els.roleApplyModal?.classList.add("hidden");
+  els.roleApplyForm?.reset();
+}
+
+async function submitRoleApplyForm(event) {
+  event.preventDefault();
+  const alliance = els.roleApplyAlliance?.value || "";
+  if (!alliance) {
+    toast("请选择联盟");
+    return;
+  }
+  try {
+    await request("/api/admin-role-requests", {
+      method: "POST",
+      body: JSON.stringify({ alliance }),
+    });
+    closeRoleApplyModal();
+    toast("联盟管理员申请已提交");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function openRoleRequestModal() {
+  if (!els.roleRequestModal || !els.roleRequestList) return;
+  try {
+    await loadRoleRequests();
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  renderRoleRequestList();
+  els.roleRequestModal.classList.remove("hidden");
+}
+
+function closeRoleRequestModal() {
+  els.roleRequestModal?.classList.add("hidden");
+}
+
+function renderRoleRequestList() {
+  if (!els.roleRequestList) return;
+  if (!state.roleRequests.length) {
+    els.roleRequestList.innerHTML = `<article class="empty-card">暂无联盟管理员申请。</article>`;
+    return;
+  }
+  els.roleRequestList.innerHTML = state.roleRequests.map((item) => `
+    <article class="request-item">
+      <div class="request-item__body">
+        <strong>${escapeHtml(item.display_name || item.username || "-")}</strong>
+        <p>${escapeHtml(item.email || "-")}</p>
+        <small>${escapeHtml(item.created_at || "")}</small>
+      </div>
+      <div class="request-item__actions">
+        <select class="request-alliance-select" data-role-request-alliance="${item.id}">
+          ${renderAllianceSelectOptions(item.alliance || "")}
+        </select>
+        <button type="button" class="action-btn action-btn--approve" data-role-request-action="approve" data-id="${item.id}">同意</button>
+        <button type="button" class="action-btn action-btn--reject" data-role-request-action="reject" data-id="${item.id}">拒绝</button>
+      </div>
+    </article>
+  `).join("");
+}
+
+async function reviewRoleRequest(requestId, action) {
+  if (!requestId || !action) return;
+  const allianceSelect = els.roleRequestList?.querySelector(`[data-role-request-alliance="${requestId}"]`);
+  const alliance = allianceSelect instanceof HTMLSelectElement ? allianceSelect.value : "";
+  try {
+    await request(`/api/admin-role-requests/${requestId}`, {
+      method: "POST",
+      body: JSON.stringify({ action, alliance }),
+    });
+    await loadRoleRequests();
+    renderRoleRequestList();
+    toast(action === "approve" ? "申请已通过" : "申请已拒绝");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
 function renderAuth() {
-  const authenticated = state.me.authenticated && state.me.is_admin;
+  const authenticated = state.me.authenticated && hasPermission("admin_panel_access");
   els.logoutBtn?.classList.toggle("hidden", !state.me.authenticated);
   els.loginForm?.classList.toggle("hidden", state.me.authenticated);
+  els.roleApplyBtn?.classList.toggle("hidden", !(state.me.authenticated && currentUserRole() !== "AllianceAdmin" && currentUserRole() !== "SuperAdmin"));
+  els.roleRequestBtn?.classList.toggle("hidden", currentUserRole() !== "SuperAdmin");
+  els.certRequestBtn?.classList.toggle("hidden", currentUserRole() !== "AllianceAdmin");
+  // 更新申请列表徽章
+  const badge = document.querySelector("#roleRequestBadge");
+  if (badge) {
+    const count = state.roleRequests.length;
+    badge.textContent = count;
+    badge.classList.toggle("hidden", count === 0);
+  }
   els.guildAdminGate?.classList.toggle("hidden", authenticated);
   els.guildAdminLayout?.classList.toggle("hidden", !authenticated);
   els.announcementAdminGate?.classList.toggle("hidden", authenticated);
   els.announcementAdminLayout?.classList.toggle("hidden", !authenticated);
-  document.querySelector('[data-view="guildAdmin"]')?.classList.toggle("hidden", !state.me.is_admin);
-  document.querySelector('[data-view="announcementAdmin"]')?.classList.toggle("hidden", !state.me.is_admin);
-  if (els.loginState) {
-    els.loginState.textContent = state.me.authenticated && state.me.user
-      ? `当前用户：${state.me.is_admin ? (state.me.user.display_name || state.me.user.username) : state.me.user.username}${state.me.is_admin ? "（管理员）" : "（普通用户）"}`
-      : "未登录";
+  document.querySelector('[data-view="guildAdmin"]')?.classList.toggle("hidden", !hasPermission("manage_guilds"));
+  document.querySelector('[data-view="announcementAdmin"]')?.classList.toggle("hidden", !hasPermission("manage_announcements"));
+    if (els.loginState) {
+    if (state.me.authenticated && state.me.user) {
+      els.loginState.textContent = `当前用户：${state.me.user.display_name || state.me.user.username}（${currentUserRole()}）`;
+    } else {
+      els.loginState.textContent = "未登录";
+    }
   }
-  if ((state.currentView === "guildAdmin" || state.currentView === "announcementAdmin") && !state.me.is_admin) {
+  if ((state.currentView === "guildAdmin" || state.currentView === "announcementAdmin") && !hasPermission("admin_panel_access")) {
     state.currentView = state.me.authenticated ? "guilds" : "login";
   }
   renderView();
@@ -1352,7 +1630,7 @@ async function handleMemberSubmit(event) {
 function resetMemberForm() {
   els.memberForm?.reset();
   document.querySelector("#memberId").value = "";
-  document.querySelector("#memberAlliance").value = state.dashboard?.alliance_name || "🔮联盟";
+  document.querySelector("#memberAlliance").value = state.dashboard?.alliance_name || "默认联盟";
   setGuildFormEditMode(false);
   if (els.memberFormTitle) els.memberFormTitle.textContent = "新增妖盟";
   if (els.memberFormHint) els.memberFormHint.textContent = "填写妖盟基础信息，保存后即可继续补成员。";
@@ -1436,7 +1714,7 @@ function renderAdminAnnouncements() {
 function getAdminGuildRows() {
   return (state.dashboard?.guilds || []).map((guild) => ({
     key: guild.key || [guild.code || "", guild.prefix || "", guild.name || ""].join("|"),
-    alliance: guild.hill || guild.alliance || "🔮联盟",
+    alliance: guild.hill || guild.alliance || "默认联盟",
     code: guild.code || "",
     displayName: guild.displayName || guild.display_name || guild.name || "未命名妖盟",
     shortName: guild.name || "未命名妖盟",
@@ -1509,7 +1787,7 @@ function openMemberEditModal(member, guildKey) {
   const guildDisplayName = sourceMember
     ? getGuildDisplayName(sourceMember)
     : (dashboardGuild?.display_name || dashboardGuild?.displayName || [dashboardGuild?.code || "", dashboardGuild?.prefix || "", dashboardGuild?.name || ""].filter(Boolean).join(" "));
-  const allianceName = sourceMember?.alliance || dashboardGuild?.alliance || dashboardGuild?.hill || "🔮联盟";
+  const allianceName = sourceMember?.alliance || dashboardGuild?.alliance || dashboardGuild?.hill || "默认联盟";
   if (els.memberEditTitle) {
     els.memberEditTitle.textContent = isEdit ? `编辑成员 · ${sourceMember.name}` : `新增成员 · ${guildDisplayName}`;
   }
@@ -1537,10 +1815,10 @@ function closeMemberEditModal() {
 function openScreenshotPreview(member) {
   if (!member?.screenshot_url || !els.screenshotPreviewModal || !els.screenshotPreviewImage) return;
   if (els.screenshotPreviewTitle) {
-    els.screenshotPreviewTitle.textContent = `${member.name} 的游戏截图`;
+    els.screenshotPreviewTitle.textContent = `${member.name} 的截图预览`;
   }
   els.screenshotPreviewImage.src = member.screenshot_url;
-  els.screenshotPreviewImage.alt = `${member.name} 的游戏截图`;
+  els.screenshotPreviewImage.alt = `${member.name} 的截图预览`;
   els.screenshotPreviewModal.classList.remove("hidden");
 }
 
@@ -1590,7 +1868,7 @@ async function handleExcelFileSelected(event) {
   const file = input.files?.[0];
   if (!file) return;
 
-  // 获取当前妖盟的信息
+  // 鑾峰彇褰撳墠濡栫洘鐨勪俊鎭?
   const guildKey = state.selectedGuild;
   if (!guildKey) {
     toast("未选择妖盟");
@@ -1598,7 +1876,7 @@ async function handleExcelFileSelected(event) {
     return;
   }
 
-  // 解析guildKey获取妖盟信息
+  // 瑙ｆ瀽guildKey鑾峰彇濡栫洘淇℃伅
   const parts = guildKey.split("|");
   const guild_code = parts[0] || "";
   const guild_prefix = parts[1] || "";
@@ -1620,10 +1898,10 @@ async function handleExcelFileSelected(event) {
     
     let message = result.message;
     if (result.skipped_excel_duplicates > 0) {
-      message += `（Excel内去重 ${result.skipped_excel_duplicates} 人）`;
+      message += `（Excel 内去重 ${result.skipped_excel_duplicates} 人）`;
     }
     if (result.skipped_existing > 0) {
-      message += `（已有成员跳过 ${result.skipped_existing} 人）`;
+      message += `（已跳过已有成员 ${result.skipped_existing} 人）`;
     }
     toast(message);
   } catch (error) {
@@ -1747,7 +2025,7 @@ async function handleHillDelete() {
     return;
   }
 
-  if (!confirm(`确定删除联盟 ${hillName} 吗？该联盟下的所有妖盟和成员都会被一起删除。`)) {
+  if (!confirm(`确定删除联盟 ${hillName} 吗？该联盟下的所有妖盟和成员都会一起删除。`)) {
     return;
   }
 
@@ -1788,18 +2066,45 @@ function handleModalDismiss(event) {
   }
   if (target.dataset.closeModal === "screenshot-preview") {
     closeScreenshotPreviewModal();
+    return;
+  }
+  if (target.dataset.closeModal === "cert-request") {
+    closeCertRequestModal();
+    return;
+  }
+  if (target.dataset.closeModal === "role-request") {
+    closeRoleRequestModal();
+    return;
+  }
+  if (target.dataset.closeModal === "role-apply") {
+    closeRoleApplyModal();
   }
 }
 
 function handleModalKeydown(event) {
   if (event.key === "Escape" && !els.guildEditModal?.classList.contains("hidden")) {
     closeGuildEditModal();
+    return;
+  }
+  if (event.key === "Escape" && !els.roleApplyModal?.classList.contains("hidden")) {
+    closeRoleApplyModal();
+    return;
+  }
+  if (event.key === "Escape" && !els.roleRequestModal?.classList.contains("hidden")) {
+    closeRoleRequestModal();
+    return;
+  }
+  if (event.key === "Escape" && !els.certRequestModal?.classList.contains("hidden")) {
+    closeCertRequestModal();
+    return;
   }
   if (event.key === "Escape" && !els.memberEditModal?.classList.contains("hidden")) {
     closeMemberEditModal();
+    return;
   }
   if (event.key === "Escape" && !els.hillEditModal?.classList.contains("hidden")) {
     closeHillEditModal();
+    return;
   }
   if (event.key === "Escape" && !els.screenshotPreviewModal?.classList.contains("hidden")) {
     closeScreenshotPreviewModal();
@@ -1820,8 +2125,8 @@ async function handleMemberEditSubmit(event) {
     return;
   }
   const guildBase = guildMember || {
-    alliance: dashboardGuild?.alliance || dashboardGuild?.hill || "🔮联盟",
-    hill: dashboardGuild?.hill || dashboardGuild?.alliance || "🔮联盟",
+    alliance: dashboardGuild?.alliance || dashboardGuild?.hill || "默认联盟",
+    hill: dashboardGuild?.hill || dashboardGuild?.alliance || "默认联盟",
     guild_code: dashboardGuild?.code || "",
     guild_prefix: dashboardGuild?.prefix || "",
     guild_power: Number(dashboardGuild?.custom_power || dashboardGuild?.customPower || dashboardGuild?.power || 0),
@@ -1865,13 +2170,13 @@ function handleGuildDetailToolbarAction(event) {
   const target = event.target.closest("[data-action]");
   if (!(target instanceof HTMLElement)) return;
   if (target.dataset.action === "go-login") {
-    switchView(state.me.authenticated ? (state.me.is_admin ? "guildAdmin" : "guilds") : "login");
+    switchView(state.me.authenticated ? (hasPermission("manage_guilds") ? "guildAdmin" : "guilds") : "login");
     return;
   }
-  if (target.dataset.action === "add-member" && state.me.is_admin && state.selectedGuild) {
+  if (target.dataset.action === "add-member" && canManageAlliance(state.members.find((item) => buildGuildKey(item) === state.selectedGuild)?.alliance || getGuildDetail(state.selectedGuild)?.hill || "") && state.selectedGuild) {
     openMemberEditModal(null, state.selectedGuild);
   }
-  if (target.dataset.action === "import-excel" && state.me.is_admin && state.selectedGuild) {
+  if (target.dataset.action === "import-excel" && canManageAlliance(state.members.find((item) => buildGuildKey(item) === state.selectedGuild)?.alliance || getGuildDetail(state.selectedGuild)?.hill || "") && state.selectedGuild) {
     triggerExcelImport();
   }
 }
@@ -1879,6 +2184,38 @@ function handleGuildDetailToolbarAction(event) {
 function handleGuildDetailAction(event) {
   const target = event.target.closest("[data-action]");
   if (!(target instanceof HTMLElement)) return;
+  if (target.dataset.action === "apply-cert") {
+    const memberId = target.dataset.id;
+    if (!state.me.authenticated) {
+      switchView("login");
+      toast("请先登录后再申请认证");
+      return;
+    }
+    if (currentUserRole() !== "Guest") {
+      toast("只有 Guest 才可以申请成员认证");
+      return;
+    }
+    if (!memberId) return;
+    request("/api/member-cert-requests", {
+      method: "POST",
+      body: JSON.stringify({ member_id: memberId }),
+    })
+      .then(async () => {
+        await loadMyMemberRequests();
+        renderGuildDetail();
+        toast("认证申请已提交");
+      })
+      .catch((error) => toast(error.message));
+    return;
+  }
+  if (target.dataset.action === "open-member-cert") {
+    const memberId = target.dataset.id;
+    if (!memberId) return;
+    const member = state.members.find((item) => String(item.id) === memberId);
+    if (!member || !canManageAlliance(member.alliance || member.hill || "")) return;
+    openCertRequestModal(memberId);
+    return;
+  }
   const memberId = target.dataset.id;
   if (!memberId) return;
   const member = state.members.find((item) => String(item.id) === memberId);
@@ -1888,22 +2225,22 @@ function handleGuildDetailAction(event) {
     return;
   }
   if (target.dataset.action === "delete-screenshot") {
-    if (!state.me.is_admin) return;
+    if (!canManageAlliance(member.alliance || member.hill || "")) return;
     deleteMemberScreenshot(member);
     return;
   }
   if (target.dataset.action === "upload-screenshot") {
-    if (!state.me.is_admin) return;
+    if (!canManageAlliance(member.alliance || member.hill || "")) return;
     triggerMemberScreenshotUpload(member.id);
     return;
   }
   if (target.dataset.action === "edit-detail-member") {
-    if (!state.me.is_admin) return;
+    if (!canManageAlliance(member.alliance || member.hill || "")) return;
     openMemberEditModal(member, buildGuildKey(member));
     return;
   }
   if (target.dataset.action === "delete-detail-member" && confirm(`确定删除成员 ${member.name} 吗？`)) {
-    if (!state.me.is_admin) return;
+    if (!canManageAlliance(member.alliance || member.hill || "")) return;
     request(`/api/members/${member.id}`, { method: "DELETE" })
       .then(async () => {
         await refreshAll();
@@ -1980,7 +2317,7 @@ function handleAdminAnnouncementAction(event) {
 document.addEventListener("click", (event) => {
   const hillEditButton = event.target.closest("[data-edit-hill]");
   if (hillEditButton instanceof HTMLElement) {
-    if (!state.me.is_admin) return;
+    if (!canManageAlliance(member.alliance || member.hill || "")) return;
     openHillEditModal(hillEditButton.dataset.editHill || "");
     return;
   }
@@ -2217,7 +2554,7 @@ renderGuildSummary = function renderGuildSummaryOverride() {
         <header class="hill-section__head">
           <div class="hill-section__bar">
             <h2>${escapeHtml(hill.name)}</h2>
-            ${state.me.is_admin ? `<button type="button" class="ghost-btn hill-section__edit-btn" data-edit-hill="${escapeHtml(hill.name)}">编辑联盟</button>` : ""}
+            ${hasPermission("manage_guilds") && canManageAlliance(hill.name) ? `<button type="button" class="ghost-btn hill-section__edit-btn" data-edit-hill="${escapeHtml(hill.name)}">编辑联盟</button>` : ""}
           </div>
         </header>
         <div class="guild-card-grid">
@@ -2228,5 +2565,6 @@ renderGuildSummary = function renderGuildSummaryOverride() {
     `).join("")}
   `;
 };
+
 
 
