@@ -173,7 +173,10 @@
                   <p class="panel-eyebrow">Guild Admin</p>
                   <h2 id="memberFormTitle">录入新妖盟</h2>
                 </div>
-                <button id="resetMemberBtn" type="button" class="ghost-btn">清空表单</button>
+                <div class="panel-toolbar">
+                  <button id="importGuildsBtn" type="button" class="ghost-btn">导入妖盟</button>
+                  <button id="resetMemberBtn" type="button" class="ghost-btn">清空表单</button>
+                </div>
               </div>
               <form id="memberForm" class="member-form member-form--guild">
                 <input id="memberId" type="hidden" value="">
@@ -208,9 +211,12 @@
             </article>
 
             <article class="panel-card">
-              <div class="panel-card__head">
+<div class="panel-card__head">
                 <h2>妖盟管理列表</h2>
-                <button id="refreshBtn" type="button" class="ghost-btn">刷新数据</button>
+                <div class="panel-toolbar">
+                  <button id="exportGuildsBtn" type="button" class="ghost-btn">导出妖盟</button>
+                  <button id="refreshBtn" type="button" class="ghost-btn">刷新数据</button>
+                </div>
               </div>
               <div class="table-wrap">
                 <table class="data-table">
@@ -227,6 +233,7 @@
                   <tbody id="adminMemberTable"></tbody>
                 </table>
               </div>
+              <div id="adminGuildPagination"></div>
             </article>
           </div>
         </section>

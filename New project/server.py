@@ -2,6 +2,7 @@ import hashlib
 import base64
 import html
 import hmac
+import io
 import json
 import mimetypes
 import secrets
@@ -21,6 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 import openpyxl
+from openpyxl.styles import Font
 
 from auth import AuthHandler, get_current_auth, initialize_auth_database
 
@@ -128,6 +130,29 @@ def parse_scaled_number(value, field_name="数值"):
         return round(float(normalized or "0") * multiplier, 4)
     except ValueError as exc:
         raise ValueError(f"{field_name}格式不正确，支持小数，也支持万、亿、万亿等单位") from exc
+
+
+def format_number(value):
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return "0"
+
+    sign = "-" if number < 0 else ""
+    abs_number = abs(number)
+    units = [
+        ("万亿", 1_000_000_000_000),
+        ("亿", 100_000_000),
+        ("万", 10_000),
+    ]
+    for unit, divisor in units:
+        if abs_number >= divisor:
+            scaled = abs_number / divisor
+            text = f"{scaled:.2f}".rstrip("0").rstrip(".")
+            return f"{sign}{text}{unit}"
+    if abs_number.is_integer():
+        return f"{sign}{int(abs_number)}"
+    return f"{sign}{abs_number:.2f}".rstrip("0").rstrip(".")
 
 
 def hash_password(password: str, salt: str) -> str:
@@ -490,8 +515,21 @@ class AllianceHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             self.send_json(self.list_members(query))
             return
+        if parsed.path == "/api/guilds/export":
+            admin = self.require_admin()
+            if not admin:
+                return
+            self.export_guilds_excel()
+            return
         if parsed.path == "/api/announcements":
             self.send_json(self.list_announcements())
+            return
+        if parsed.path.startswith("/api/guilds/") and parsed.path.endswith("/members/export"):
+            admin = self.require_admin()
+            if not admin:
+                return
+            guild_key = unquote(parsed.path.strip("/").split("/")[2])
+            self.export_guild_members_excel(guild_key)
             return
         if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
             member_id = parsed.path.strip("/").split("/")[2]
@@ -531,6 +569,12 @@ class AllianceHandler(BaseHTTPRequestHandler):
                 return
             payload = self.read_json()
             self.create_guild(payload)
+            return
+        if parsed.path == "/api/guilds/import":
+            admin = self.require_admin()
+            if not admin:
+                return
+            self.import_guilds_from_excel()
             return
         if parsed.path == "/api/members":
             admin = self.require_admin()
@@ -1516,6 +1560,156 @@ class AllianceHandler(BaseHTTPRequestHandler):
             except:
                 pass
 
+    def import_guilds_from_excel(self):
+        """从Excel文件批量导入妖盟数据"""
+        form = FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+            },
+        )
+
+        file_item = form["file"] if "file" in form else None
+        if file_item is None or getattr(file_item, "file", None) is None:
+            self.send_json({"error": "请先选择Excel文件"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        default_alliance = str(form.getvalue("alliance", "")).strip() or "🔮联盟"
+
+        raw = file_item.file.read()
+        if not raw:
+            self.send_json({"error": "Excel文件不能为空"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = tmp.name
+
+        try:
+            wb = openpyxl.load_workbook(tmp_path)
+            ws = wb.active
+
+            headers = [str(cell.value).strip() if cell.value else "" for cell in ws[1]]
+            col_indices = {}
+            for i, header in enumerate(headers):
+                header_lower = header.lower()
+                if header_lower in ["妖盟编号", "编号", "guild_code", "code"]:
+                    col_indices["guild_code"] = i
+                elif header_lower in ["山名字号", "山头", "前缀", "guild_prefix", "prefix"]:
+                    col_indices["guild_prefix"] = i
+                elif header_lower in ["妖盟名称", "妖盟", "guild", "name"]:
+                    col_indices["guild"] = i
+                elif header_lower in ["妖盟总战力", "总战力", "guild_power", "power"]:
+                    col_indices["guild_power"] = i
+                elif header_lower in ["盟主昵称", "盟主", "leader_name", "leader"]:
+                    col_indices["leader_name"] = i
+
+            if "guild" not in col_indices:
+                self.send_json({"error": "Excel中未找到妖盟名称列（妖盟名称/妖盟）"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            rows_data = []
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                guild_name = str(row[col_indices["guild"]]).strip() if col_indices["guild"] < len(row) and row[col_indices["guild"]] else ""
+                if not guild_name:
+                    continue
+
+                row_data = {
+                    "alliance": default_alliance,
+                    "guild_code": str(row[col_indices["guild_code"]]).strip() if "guild_code" in col_indices and col_indices["guild_code"] < len(row) and row[col_indices["guild_code"]] else "",
+                    "guild_prefix": str(row[col_indices["guild_prefix"]]).strip() if "guild_prefix" in col_indices and col_indices["guild_prefix"] < len(row) and row[col_indices["guild_prefix"]] else "",
+                    "guild": guild_name,
+                    "guild_power": row[col_indices["guild_power"]] if "guild_power" in col_indices and col_indices["guild_power"] < len(row) else 0,
+                    "leader_name": str(row[col_indices["leader_name"]]).strip() if "leader_name" in col_indices and col_indices["leader_name"] < len(row) and row[col_indices["leader_name"]] else "",
+                }
+                rows_data.append(row_data)
+
+            if not rows_data:
+                self.send_json({"error": "Excel中没有找到有效妖盟数据"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            seen_keys = set()
+            unique_rows = []
+            for row_data in rows_data:
+                unique_key = build_guild_key(row_data["guild_code"], row_data["guild_prefix"], row_data["guild"])
+                if unique_key in seen_keys:
+                    continue
+                seen_keys.add(unique_key)
+                unique_rows.append(row_data)
+
+            excel_duplicates = len(rows_data) - len(unique_rows)
+
+            with open_db() as connection:
+                existing_rows = connection.execute("SELECT guild_key FROM guild_registry").fetchall()
+                existing_keys = {row["guild_key"] for row in existing_rows}
+
+                new_guilds = []
+                skipped_existing = 0
+                for row_data in unique_rows:
+                    try:
+                        guild = validate_guild(row_data)
+                    except ValueError:
+                        continue
+                    guild_key = build_guild_key(guild["guild_code"], guild["guild_prefix"], guild["guild"])
+                    if guild_key in existing_keys:
+                        skipped_existing += 1
+                        continue
+                    new_guilds.append((guild_key, guild))
+                    existing_keys.add(guild_key)
+
+                if not new_guilds:
+                    self.send_json({
+                        "message": "所有妖盟均已存在，无需导入",
+                        "imported": 0,
+                        "skipped_excel_duplicates": excel_duplicates,
+                        "skipped_existing": skipped_existing,
+                        "total_rows": len(rows_data),
+                    })
+                    return
+
+                timestamp = now_text()
+                for guild_key, guild in new_guilds:
+                    connection.execute(
+                        """
+                        INSERT INTO guild_registry (
+                            guild_key, alliance, hill, guild_code, guild_prefix, guild, guild_power, leader_name, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            guild_key,
+                            guild["alliance"],
+                            guild["hill"],
+                            guild["guild_code"],
+                            guild["guild_prefix"],
+                            guild["guild"],
+                            guild["guild_power"],
+                            guild["leader_name"],
+                            timestamp,
+                        ),
+                    )
+                connection.commit()
+
+            self.send_json({
+                "message": f"成功导入 {len(new_guilds)} 个妖盟",
+                "imported": len(new_guilds),
+                "skipped_excel_duplicates": excel_duplicates,
+                "skipped_existing": skipped_existing,
+                "total_rows": len(rows_data),
+            })
+
+        except Exception as exc:
+            self.send_json({"error": f"解析Excel文件失败: {str(exc)}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+
     def get_current_user_profile(self):
         current = get_current_auth(self)
         if not current.get("authenticated"):
@@ -1677,6 +1871,115 @@ class AllianceHandler(BaseHTTPRequestHandler):
                 resolved.unlink()
         except FileNotFoundError:
             return
+
+    def send_excel_file(self, workbook, filename):
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        data = buffer.getvalue()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def export_guilds_excel(self):
+        with open_db() as connection:
+            guilds = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT alliance, hill, guild_code, guild_prefix, guild, guild_power, leader_name, updated_at
+                    FROM guild_registry
+                    ORDER BY CAST(COALESCE(NULLIF(guild_code, ''), '0') AS INTEGER) DESC, guild_prefix ASC, guild ASC
+                    """
+                ).fetchall()
+            ]
+
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "guilds"
+        sheet.append(["联盟名称", "山头号", "山头名", "妖盟名称", "妖盟总战力", "盟主昵称"])
+        for guild in guilds:
+            sheet.append([
+                "🔮联盟",
+                guild.get("guild_code") or "",
+                guild.get("guild_prefix") or "",
+                guild.get("guild") or "",
+                format_number(guild.get("guild_power", 0)),
+                guild.get("leader_name") or "",
+            ])
+        emoji_font = Font(name="Segoe UI Emoji")
+        for cell in sheet["A"]:
+            cell.font = emoji_font
+        self.send_excel_file(workbook, "guilds_export.xlsx")
+
+    def export_guild_members_excel(self, guild_key):
+        with open_db() as connection:
+            guild = connection.execute(
+                """
+                SELECT alliance, hill, guild_code, guild_prefix, guild, guild_power, leader_name, updated_at
+                FROM guild_registry
+                WHERE guild_key = ?
+                """,
+                (guild_key,),
+            ).fetchone()
+            if not guild:
+                self.send_json({"error": "妖盟不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+
+            members = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT name, role, realm, power, speed, pet, bonus_damage, damage_reduction, note, updated_at
+                    FROM members
+                    WHERE guild_code = ? AND guild_prefix = ? AND guild = ?
+                    ORDER BY power DESC, id DESC
+                    """,
+                    (guild["guild_code"], guild["guild_prefix"], guild["guild"]),
+                ).fetchall()
+            ]
+
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "members"
+        sheet.append([
+            "联盟名称",
+            "山头号",
+            "山名字号",
+            "妖盟名称",
+            "妖盟总战力",
+            "成员昵称",
+            "等级",
+            "境界",
+            "战力",
+            "敏捷",
+            "灵兽",
+            "增伤",
+            "减伤",
+        ])
+        for member in members:
+            sheet.append([
+                "🔮联盟",
+                guild["guild_code"] or "",
+                guild["guild_prefix"] or "",
+                guild["guild"] or "",
+                format_number(guild["guild_power"] or 0),
+                member.get("name") or "",
+                member.get("role") or "",
+                member.get("realm") or "",
+                format_number(member.get("power", 0)),
+                format_number(member.get("speed", 0)),
+                member.get("pet") or "",
+                member.get("bonus_damage") if member.get("bonus_damage") not in (None, "") else "",
+                member.get("damage_reduction") if member.get("damage_reduction") not in (None, "") else "",
+            ])
+        emoji_font = Font(name="Segoe UI Emoji")
+        for cell in sheet["A"]:
+            cell.font = emoji_font
+        safe_code = guild["guild_code"] or "guild"
+        self.send_excel_file(workbook, f"guild_members_{safe_code}.xlsx")
 
     def send_json(self, payload, status=HTTPStatus.OK):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")

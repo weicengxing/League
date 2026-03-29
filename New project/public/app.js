@@ -114,6 +114,9 @@ const state = {
   hillBrowsePage: 1,
   rankingPage: 1,
   guildDetailPage: 1,
+  announcementPage: 1,
+  melonPage: 1,
+  adminGuildPage: 1,
   rankingGuildFilter: "all",
   sort: "power-desc",
   pendingScreenshotMemberId: null,
@@ -167,10 +170,13 @@ const els = {
   announcementAdminGate: document.querySelector("#announcementAdminGate"),
   announcementAdminLayout: document.querySelector("#announcementAdminLayout"),
   refreshBtn: document.querySelector("#refreshBtn"),
+  exportGuildsBtn: document.querySelector("#exportGuildsBtn"),
+  adminGuildPagination: document.querySelector("#adminGuildPagination"),
   memberForm: document.querySelector("#memberForm"),
   memberFormTitle: document.querySelector("#memberFormTitle"),
   memberFormHint: document.querySelector("#memberFormHint"),
   memberSubmitBtn: document.querySelector("#memberSubmitBtn"),
+  importGuildsBtn: document.querySelector("#importGuildsBtn"),
   resetMemberBtn: document.querySelector("#resetMemberBtn"),
   guildEditModal: document.querySelector("#guildEditModal"),
   guildEditForm: document.querySelector("#guildEditForm"),
@@ -516,7 +522,9 @@ function bindEvents() {
     await refreshAll();
     toast("数据已刷新");
   });
+  els.exportGuildsBtn?.addEventListener("click", handleGuildExport);
   els.memberForm?.addEventListener("submit", handleMemberSubmit);
+  els.importGuildsBtn?.addEventListener("click", triggerGuildExcelImport);
   els.resetMemberBtn?.addEventListener("click", resetMemberForm);
   els.guildEditForm?.addEventListener("submit", handleGuildEditSubmit);
   els.memberEditForm?.addEventListener("submit", handleMemberEditSubmit);
@@ -548,6 +556,14 @@ function bindEvents() {
   excelInput.id = "excelImportInput";
   document.body.appendChild(excelInput);
   excelInput.addEventListener("change", handleExcelFileSelected);
+
+  const guildExcelInput = document.createElement("input");
+  guildExcelInput.type = "file";
+  guildExcelInput.accept = ".xlsx,.xls";
+  guildExcelInput.style.display = "none";
+  guildExcelInput.id = "guildExcelImportInput";
+  document.body.appendChild(guildExcelInput);
+  guildExcelInput.addEventListener("change", handleGuildExcelFileSelected);
 }
 
 async function boot() {
@@ -595,6 +611,7 @@ async function handleMelonPostSubmit(event) {
   
   // Add optimistic item
   state.announcements.unshift(tempItem);
+  state.melonPage = 1;
   renderFeeds();
   
   // Clear form
@@ -621,6 +638,7 @@ async function handleMelonPostSubmit(event) {
         state.announcements.unshift(result.item);
       }
     }
+    state.melonPage = 1;
     renderFeeds();
     renderAdminAnnouncements();
     
@@ -718,6 +736,8 @@ async function fetchMembers() {
 async function fetchAnnouncements() {
   const data = await request("/api/announcements");
   state.announcements = data.items || [];
+  state.announcementPage = Math.max(1, state.announcementPage || 1);
+  state.melonPage = Math.max(1, state.melonPage || 1);
   renderFeeds();
   renderAdminAnnouncements();
 }
@@ -902,6 +922,7 @@ function renderGuildDetail() {
   if (els.guildDetailActions) {
     els.guildDetailActions.innerHTML = state.me.is_admin
       ? `<button type="button" class="primary-btn" data-action="import-excel">导入Excel</button>
+         <button type="button" class="ghost-btn" data-action="export-members">导出成员</button>
          <button type="button" class="ghost-btn" data-action="add-member">新增成员</button>`
       : `<button type="button" class="ghost-btn" data-action="go-login">登录后管理成员</button>`;
   }
@@ -1215,11 +1236,17 @@ function renderRanking() {
 function renderFeeds() {
   const announcements = state.announcements.filter((item) => item.category === "公告");
   const melonPosts = state.announcements.filter((item) => item.category === "瓜棚");
+  const announcementPage = paginateItems(announcements, state.announcementPage, 5);
+  const melonPage = paginateItems(melonPosts, state.melonPage, 5);
+  state.announcementPage = announcementPage.currentPage;
+  state.melonPage = melonPage.currentPage;
   if (els.announcementList) {
-    els.announcementList.innerHTML = renderFeedGroup(announcements, "暂无公告内容");
+    els.announcementList.innerHTML = renderFeedGroup(announcementPage.items, "暂无公告内容")
+      + renderSimplePagination("announcement-page", announcementPage);
   }
   if (els.melonList) {
-    els.melonList.innerHTML = renderFeedGroup(melonPosts, "暂无瓜棚内容");
+    els.melonList.innerHTML = renderFeedGroup(melonPage.items, "暂无瓜棚内容")
+      + renderSimplePagination("melon-page", melonPage);
   }
 }
 
@@ -1436,9 +1463,12 @@ function renderAdminMembers() {
   const guildRows = getAdminGuildRows();
   if (!guildRows.length) {
     els.adminMemberTable.innerHTML = `<tr><td colspan="6">暂无妖盟数据。</td></tr>`;
+    if (els.adminGuildPagination) els.adminGuildPagination.innerHTML = "";
     return;
   }
-  els.adminMemberTable.innerHTML = guildRows.map((guild) => `
+  const page = paginateItems(guildRows, state.adminGuildPage, 5);
+  state.adminGuildPage = page.currentPage;
+  els.adminMemberTable.innerHTML = page.items.map((guild) => `
     <tr>
       <td>${escapeHtml(guild.alliance)}</td>
       <td>${escapeHtml(guild.code || "-")}</td>
@@ -1453,6 +1483,9 @@ function renderAdminMembers() {
       </td>
     </tr>
   `).join("");
+  if (els.adminGuildPagination) {
+    els.adminGuildPagination.innerHTML = renderSimplePagination("admin-guild-page", page);
+  }
 }
 
 function renderAdminAnnouncements() {
@@ -1491,6 +1524,28 @@ function getAdminGuildRows() {
 
 function getAdminGuildRowByKey(guildKey) {
   return getAdminGuildRows().find((guild) => guild.key === guildKey) || null;
+}
+
+function triggerFileDownload(url) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function handleGuildExport() {
+  triggerFileDownload("/api/guilds/export");
+}
+
+function handleMemberExport() {
+  if (!state.selectedGuild) {
+    toast("请先选择一个妖盟");
+    return;
+  }
+  triggerFileDownload(`/api/guilds/${encodeURIComponent(state.selectedGuild)}/members/export`);
 }
 
 async function saveGuildRecord(guildKey, payload) {
@@ -1622,6 +1677,14 @@ function triggerMemberScreenshotUpload(memberId) {
 
 function triggerExcelImport() {
   const excelInput = document.querySelector("#excelImportInput");
+  if (excelInput) {
+    excelInput.value = "";
+    excelInput.click();
+  }
+}
+
+function triggerGuildExcelImport() {
+  const excelInput = document.querySelector("#guildExcelImportInput");
   if (excelInput) {
     excelInput.value = "";
     excelInput.click();
@@ -1876,6 +1939,33 @@ function handleModalDismiss(event) {
   }
 }
 
+async function handleGuildExcelFileSelected(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("alliance", state.dashboard?.alliance_name || "🔮联盟");
+
+  try {
+    const result = await request("/api/guilds/import", {
+      method: "POST",
+      body: formData,
+    });
+    await refreshAll();
+    let message = result.message || "妖盟导入成功";
+    if (result.skipped_existing > 0) {
+      message += `（已存在跳过 ${result.skipped_existing} 个）`;
+    }
+    toast(message);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    input.value = "";
+  }
+}
+
 function handleModalKeydown(event) {
   if (event.key === "Escape" && !els.guildEditModal?.classList.contains("hidden")) {
     closeGuildEditModal();
@@ -1966,9 +2056,14 @@ function handleGuildDetailToolbarAction(event) {
   }
   if (target.dataset.action === "add-member" && state.me.is_admin && state.selectedGuild) {
     openMemberEditModal(null, state.selectedGuild);
+    return;
   }
   if (target.dataset.action === "import-excel" && state.me.is_admin && state.selectedGuild) {
     triggerExcelImport();
+    return;
+  }
+  if (target.dataset.action === "export-members" && state.me.is_admin && state.selectedGuild) {
+    handleMemberExport();
   }
 }
 
@@ -2110,6 +2205,18 @@ document.addEventListener("click", (event) => {
       if (kind === "guild-detail-page") {
         state.guildDetailPage = action === "prev" ? Math.max(1, state.guildDetailPage - 1) : state.guildDetailPage + 1;
         renderGuildDetail();
+      }
+      if (kind === "admin-guild-page") {
+        state.adminGuildPage = action === "prev" ? Math.max(1, state.adminGuildPage - 1) : state.adminGuildPage + 1;
+        renderAdminMembers();
+      }
+      if (kind === "announcement-page") {
+        state.announcementPage = action === "prev" ? Math.max(1, state.announcementPage - 1) : state.announcementPage + 1;
+        renderFeeds();
+      }
+      if (kind === "melon-page") {
+        state.melonPage = action === "prev" ? Math.max(1, state.melonPage - 1) : state.melonPage + 1;
+        renderFeeds();
       }
       if (kind === "hill-browse-page") {
         const visibleHills = getVisibleHills();
