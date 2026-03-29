@@ -27,6 +27,7 @@ ROLE_GUEST = "Guest"
 ROLE_VERIFIEDUSER = "VerifiedUser"
 ROLE_ALLIANCEADMIN = "AllianceAdmin"
 ROLE_SUPERADMIN = "SuperAdmin"
+LEAGUE_SCOPE_SEPARATOR = "|"
 VALID_ROLES = {ROLE_GUEST, ROLE_VERIFIEDUSER, ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN}
 DEFAULT_ROLE_PERMISSIONS = {
     ROLE_GUEST: {"view_public_content"},
@@ -135,6 +136,15 @@ def normalize_role(value):
     return role if role in VALID_ROLES else ROLE_GUEST
 
 
+def normalize_league_scope(value):
+    parts = [
+        str(item).strip()
+        for item in str(value or "").split(LEAGUE_SCOPE_SEPARATOR)
+        if str(item).strip()
+    ]
+    return LEAGUE_SCOPE_SEPARATOR.join(dict.fromkeys(parts))
+
+
 def get_role_permissions(role, connection=None):
     normalized_role = normalize_role(role)
     close_connection = connection is None
@@ -173,6 +183,7 @@ def initialize_auth_database():
                 member INTEGER,
                 role TEXT NOT NULL DEFAULT 'Guest',
                 alliance TEXT NOT NULL DEFAULT '',
+                league TEXT NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 salt TEXT NOT NULL,
                 verify_code TEXT,
@@ -190,13 +201,31 @@ def initialize_auth_database():
         )
         columns = [row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()]
         if "member_id" not in columns:
-            connection.execute("ALTER TABLE users ADD COLUMN member_id INTEGER")
+            try:
+                connection.execute("ALTER TABLE users ADD COLUMN member_id INTEGER")
+            except sqlite3.OperationalError:
+                pass  # 列可能已存在
         if "member" not in columns:
-            connection.execute("ALTER TABLE users ADD COLUMN member INTEGER")
+            try:
+                connection.execute("ALTER TABLE users ADD COLUMN member INTEGER")
+            except sqlite3.OperationalError:
+                pass  # 列可能已存在
         if "role" not in columns:
-            connection.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'Guest'")
+            try:
+                connection.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'Guest'")
+            except sqlite3.OperationalError:
+                pass  # 列可能已存在
         if "alliance" not in columns:
-            connection.execute("ALTER TABLE users ADD COLUMN alliance TEXT NOT NULL DEFAULT ''")
+            try:
+                connection.execute("ALTER TABLE users ADD COLUMN alliance TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # 列可能已存在
+        if "league" not in columns:
+            try:
+                connection.execute("ALTER TABLE users ADD COLUMN league TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # 列可能已存在
+        connection.execute("UPDATE users SET league = '' WHERE league IS NULL")
         connection.execute("UPDATE users SET role = 'Guest' WHERE role IS NULL OR role = ''")
         for role, permissions in DEFAULT_ROLE_PERMISSIONS.items():
             for permission in permissions:
@@ -275,6 +304,8 @@ def get_current_auth(handler):
         user["member"] = session.get("member")
         user["role"] = normalize_role(session.get("role"))
         user["alliance"] = session.get("alliance", "")
+        user["league"] = normalize_league_scope(session.get("league", ""))
+        user["League"] = user["league"]
 
     return {
         "authenticated": True,
@@ -597,6 +628,7 @@ class AuthHandler:
                 "member": row["member"],
                 "role": normalize_role(row["role"]),
                 "alliance": row["alliance"],
+                "league": normalize_league_scope(row["league"]),
                 "is_admin": False,
                 "created_at": datetime.now().timestamp(),
             }
@@ -620,6 +652,8 @@ class AuthHandler:
                             "member": row["member"],
                             "role": normalize_role(row["role"]),
                             "alliance": row["alliance"],
+                            "league": normalize_league_scope(row["league"]),
+                            "League": normalize_league_scope(row["league"]),
                         }
                     }, ensure_ascii=False).encode("utf-8")
             )

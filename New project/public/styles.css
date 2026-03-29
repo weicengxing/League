@@ -2132,3 +2132,139 @@ td {
   font-weight: 700;
   line-height: 1;
 }
+
+/* 数据库管理样式 */
+.danger-hint {
+  color: #c0392b;
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.db-admin-tables {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 241, 241, 0.5);
+  border: 1px solid rgba(190, 82, 82, 0.12);
+}
+
+.db-admin-tables h3 {
+  margin: 0 0 14px;
+  font-size: 1rem;
+  color: #7a5c50;
+}
+
+.db-table-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.db-table-btn {
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid rgba(190, 82, 82, 0.2);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #8b5a4a;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.db-table-btn:hover {
+  background: rgba(255, 241, 241, 0.92);
+  border-color: rgba(190, 82, 82, 0.4);
+  transform: translateY(-1px);
+}
+
+.db-table-btn.is-active {
+  background: linear-gradient(135deg, #c0392b, #a93226);
+  color: #fff;
+  border-color: transparent;
+}
+
+.db-edit-fields {
+  display: grid;
+  gap: 14px;
+}
+
+.db-edit-fields label {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(137, 155, 120, 0.12);
+}
+
+.db-edit-fields label span {
+  color: #6d775f;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.db-edit-fields input,
+.db-edit-fields textarea,
+.db-edit-fields select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(137, 155, 120, 0.2);
+  border-radius: 10px;
+  background: #fffdf8;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.db-edit-fields textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.db-cell-truncate {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-cell-content {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.pagination button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(137, 155, 120, 0.2);
+  border-radius: 12px;
+  background: #fff;
+  color: #59684d;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.pagination button:hover:not(:disabled) {
+  background: #eef3e7;
+}
+
+.pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination span {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
