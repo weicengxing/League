@@ -163,7 +163,6 @@
             <button id="logoutBtn" type="button" class="ghost-btn hidden">退出登录</button>
           </article>
         </section>
-
         <section class="board-panel" data-panel="guildAdmin">
           <article id="guildAdminGate" class="panel-card">
             <h2>妖盟管理</h2>
@@ -175,8 +174,14 @@
               <div class="panel-card__head">
                 <div class="admin-card__title">
                   <h2 id="memberFormTitle">新增妖盟</h2>
-                  <p id="memberFormHint" class="panel-hint">填写妖盟基础信息，保存后即可继续补成员。</p>                </div>
-                <button id="resetMemberBtn" type="button" class="ghost-btn">清空表单</button>
+                  <p class="panel-eyebrow">Guild Admin</p>
+                  <h2 id="memberFormTitle">录入新妖盟</h2>
+                  <p id="memberFormHint" class="panel-hint">填写妖盟基础信息，保存后即可继续补成员。</p>
+                </div>
+                <div class="panel-toolbar">
+                  <button id="importGuildsBtn" type="button" class="ghost-btn">导入妖盟</button>
+                  <button id="resetMemberBtn" type="button" class="ghost-btn">清空表单</button>
+                </div>
               </div>
               <form id="memberForm" class="member-form member-form--guild">
                 <input id="memberId" type="hidden" value="">
@@ -211,9 +216,12 @@
             </article>
 
             <article class="panel-card">
-              <div class="panel-card__head">
+<div class="panel-card__head">
                 <h2>妖盟管理列表</h2>
-                <button id="refreshBtn" type="button" class="ghost-btn">刷新数据</button>
+                <div class="panel-toolbar">
+                  <button id="exportGuildsBtn" type="button" class="ghost-btn">导出妖盟</button>
+                  <button id="refreshBtn" type="button" class="ghost-btn">刷新数据</button>
+                </div>
               </div>
               <div class="table-wrap">
                 <table class="data-table">
@@ -230,6 +238,7 @@
                   <tbody id="adminMemberTable"></tbody>
                 </table>
               </div>
+              <div id="adminGuildPagination"></div>
             </article>
           </div>
         </section>
@@ -502,6 +511,19 @@
         <div class="modal-actions">
           <button id="dangerConfirmCancelBtn" type="button" class="ghost-btn" data-close-modal="danger-confirm">取消</button>
           <button id="dangerConfirmSubmitBtn" type="button" class="danger-btn">确认继续</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="noticeModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="notice"></div>
+    <div class="modal__dialog modal__dialog--notice">
+      <div class="notice-modal">
+        <h3 id="noticeModalTitle">提示</h3>
+        <p id="noticeModalMessage">操作成功</p>
+        <div class="modal__actions notice-modal__actions">
+          <button id="noticeModalConfirmBtn" type="button" class="primary-btn">确认</button>
         </div>
       </div>
     </div>
