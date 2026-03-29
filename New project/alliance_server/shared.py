@@ -152,7 +152,7 @@ DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = PUBLIC_DIR / "uploads" / "member-screenshots"
 DB_PATH = DATA_DIR / "alliance.db"
 HOST = "127.0.0.1"
-PORT = 8000
+PORT = 8878
 SESSION_COOKIE = "alliance_session"
 SESSION_TTL_SECONDS = 60 * 60 * 12
 

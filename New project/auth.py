@@ -193,9 +193,10 @@ def initialize_auth_database():
             );
 
             CREATE TABLE IF NOT EXISTS role_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 role TEXT NOT NULL,
                 permission TEXT NOT NULL,
-                PRIMARY KEY (role, permission)
+                PRIMARY KEY (id)
             );
             """
         )
@@ -227,6 +228,25 @@ def initialize_auth_database():
                 pass  # 列可能已存在
         connection.execute("UPDATE users SET league = '' WHERE league IS NULL")
         connection.execute("UPDATE users SET role = 'Guest' WHERE role IS NULL OR role = ''")
+        
+        # 为 role_permissions 表添加 id 字段（如果不存在）
+        role_perm_columns = [row["name"] for row in connection.execute("PRAGMA table_info(role_permissions)").fetchall()]
+        if "id" not in role_perm_columns:
+            # SQLite 不能直接添加 PRIMARY KEY，需要重建表
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS role_permissions_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT NOT NULL,
+                    permission TEXT NOT NULL
+                )
+            """)
+            connection.execute("""
+                INSERT INTO role_permissions_new (role, permission)
+                SELECT role, permission FROM role_permissions
+            """)
+            connection.execute("DROP TABLE role_permissions")
+            connection.execute("ALTER TABLE role_permissions_new RENAME TO role_permissions")
+        
         for role, permissions in DEFAULT_ROLE_PERMISSIONS.items():
             for permission in permissions:
                 connection.execute(
