@@ -2,8 +2,13 @@
 let melonWs = null;
 let melonReconnectAttempts = 0;
 const MELON_WS_MAX_RECONNECT = 5;
+let authWs = null;
+let authWsReconnectAttempts = 0;
+const AUTH_WS_MAX_RECONNECT = 5;
 let melonRichEditor = null;
 let pendingDangerConfirmResolver = null;
+let noticeModalTimer = null;
+let noticeModalConfirmHandler = null;
 
 function connectMelonWebSocket() {
   if (melonWs && melonWs.readyState === WebSocket.OPEN) {
@@ -98,6 +103,56 @@ function disconnectMelonWebSocket() {
   }
 }
 
+function connectAuthWebSocket() {
+  if (!state.me?.authenticated) return;
+  if (authWs && authWs.readyState === WebSocket.OPEN) return;
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}/ws/auth`;
+
+  try {
+    authWs = new WebSocket(wsUrl);
+
+    authWs.onopen = () => {
+      authWsReconnectAttempts = 0;
+    };
+
+    authWs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "session_kicked") {
+          disconnectAuthWebSocket();
+          handleSessionKicked();
+        }
+      } catch (error) {
+        console.error("[Auth WS] Parse error:", error);
+      }
+    };
+
+    authWs.onclose = () => {
+      authWs = null;
+      if (state.me?.authenticated && !state.logoutInProgress && !state.sessionKickHandled && authWsReconnectAttempts < AUTH_WS_MAX_RECONNECT) {
+        const delay = Math.min(1000 * Math.pow(2, authWsReconnectAttempts), 10000);
+        authWsReconnectAttempts += 1;
+        setTimeout(connectAuthWebSocket, delay);
+      }
+    };
+
+    authWs.onerror = (error) => {
+      console.error("[Auth WS] Error:", error);
+    };
+  } catch (error) {
+    console.error("[Auth WS] Failed to connect:", error);
+  }
+}
+
+function disconnectAuthWebSocket() {
+  if (authWs) {
+    authWs.close();
+    authWs = null;
+  }
+}
+
 const state = {
   dashboard: null,
   members: [],
@@ -117,6 +172,8 @@ const state = {
   announcementPage: 1,
   melonPage: 1,
   adminGuildPage: 1,
+  sessionKickHandled: false,
+  logoutInProgress: false,
   rankingGuildFilter: "all",
   sort: "power-desc",
   pendingScreenshotMemberId: null,
@@ -169,6 +226,7 @@ const els = {
   guildAdminLayout: document.querySelector("#guildAdminLayout"),
   announcementAdminGate: document.querySelector("#announcementAdminGate"),
   announcementAdminLayout: document.querySelector("#announcementAdminLayout"),
+  loginNavButton: document.querySelector('[data-view="login"]'),
   refreshBtn: document.querySelector("#refreshBtn"),
   exportGuildsBtn: document.querySelector("#exportGuildsBtn"),
   adminGuildPagination: document.querySelector("#adminGuildPagination"),
@@ -234,6 +292,10 @@ const els = {
   dangerConfirmMessage: document.querySelector("#dangerConfirmMessage"),
   dangerConfirmSubmitBtn: document.querySelector("#dangerConfirmSubmitBtn"),
   dangerConfirmCancelBtn: document.querySelector("#dangerConfirmCancelBtn"),
+  noticeModal: document.querySelector("#noticeModal"),
+  noticeModalTitle: document.querySelector("#noticeModalTitle"),
+  noticeModalMessage: document.querySelector("#noticeModalMessage"),
+  noticeModalConfirmBtn: document.querySelector("#noticeModalConfirmBtn"),
   melonEditor: document.querySelector("#melonEditor"),
   melonToolbar: document.querySelector("#melonToolbar"),
   melonContent: document.querySelector("#melonContent"),
@@ -471,7 +533,16 @@ function bindEvents() {
 
   els.viewButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      switchView(button.dataset.view || "guilds");
+      const targetView = button.dataset.view || "guilds";
+      if (targetView === "login") {
+        if (state.me?.authenticated) {
+          handleLogout();
+        } else {
+          window.location.href = "/auth.html";
+        }
+        return;
+      }
+      switchView(targetView);
     });
   });
 
@@ -539,8 +610,15 @@ function bindEvents() {
   els.announcementList?.addEventListener("click", handleFeedListClick);
   els.dangerConfirmSubmitBtn?.addEventListener("click", () => resolveDangerConfirm(true));
   els.dangerConfirmCancelBtn?.addEventListener("click", () => resolveDangerConfirm(false));
+  els.noticeModalConfirmBtn?.addEventListener("click", closeNoticeModal);
   document.addEventListener("click", handleModalDismiss);
   document.addEventListener("keydown", handleModalKeydown);
+  window.addEventListener("focus", checkSessionOnResume);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      checkSessionOnResume();
+    }
+  });
   
   // 瓜棚发布表单
   const melonPostForm = document.querySelector("#melonPostForm");
@@ -566,10 +644,66 @@ function bindEvents() {
   guildExcelInput.addEventListener("change", handleGuildExcelFileSelected);
 }
 
+async function checkSessionOnResume() {
+  if (!state.me?.authenticated) return;
+  try {
+    await fetchMe();
+  } catch (error) {
+    // 401 handling is centralized in request()
+  }
+}
+
+function openNoticeModal({ title = "提示", message = "", confirmText = "确认", onConfirm = null, autoCloseMs = 0 } = {}) {
+  if (!els.noticeModal || !els.noticeModalTitle || !els.noticeModalMessage || !els.noticeModalConfirmBtn) return;
+  if (noticeModalTimer) {
+    clearTimeout(noticeModalTimer);
+    noticeModalTimer = null;
+  }
+  noticeModalConfirmHandler = onConfirm;
+  els.noticeModalTitle.textContent = title;
+  els.noticeModalMessage.textContent = message;
+  els.noticeModalConfirmBtn.textContent = confirmText;
+  els.noticeModal.classList.remove("hidden");
+  if (autoCloseMs > 0) {
+    noticeModalTimer = window.setTimeout(() => closeNoticeModal(), autoCloseMs);
+  }
+}
+
+function closeNoticeModal() {
+  if (noticeModalTimer) {
+    clearTimeout(noticeModalTimer);
+    noticeModalTimer = null;
+  }
+  els.noticeModal?.classList.add("hidden");
+  const callback = noticeModalConfirmHandler;
+  noticeModalConfirmHandler = null;
+  if (typeof callback === "function") {
+    callback();
+  }
+}
+
+function handleSessionKicked() {
+  if (state.sessionKickHandled) return;
+  state.sessionKickHandled = true;
+  disconnectAuthWebSocket();
+  state.me = { authenticated: false, user: null, is_admin: false };
+  localStorage.removeItem("alliance_user");
+  renderAuth();
+  openNoticeModal({
+    title: "登录失效",
+    message: "账号已在其他设备登录，请重新登录。",
+    confirmText: "去登录",
+    onConfirm: () => {
+      window.location.href = "/auth.html";
+    },
+  });
+}
+
 async function boot() {
   try {
     await refreshAll();
     connectMelonWebSocket();
+    connectAuthWebSocket();
   } catch (error) {
     console.error(error);
     toast(`页面初始化失败：${error.message}`);
@@ -706,6 +840,9 @@ async function request(url, options = {}) {
   const isJson = response.headers.get("Content-Type")?.includes("application/json");
   const data = isJson ? await response.json() : null;
   if (!response.ok) {
+    if (response.status === 401 && state.me?.authenticated && !state.logoutInProgress) {
+      handleSessionKicked();
+    }
     throw new Error(data?.error || "请求失败");
   }
   return data;
@@ -743,7 +880,18 @@ async function fetchAnnouncements() {
 }
 
 async function fetchMe() {
+  const previousAuthenticated = Boolean(state.me?.authenticated);
   state.me = await request("/api/auth/me");
+  if (previousAuthenticated && !state.me?.authenticated && !state.logoutInProgress) {
+    handleSessionKicked();
+    return;
+  }
+  if (state.me?.authenticated) {
+    state.sessionKickHandled = false;
+    connectAuthWebSocket();
+  } else {
+    disconnectAuthWebSocket();
+  }
   renderAuth();
   renderFeeds();
   renderAdminAnnouncements();
@@ -1284,6 +1432,9 @@ function renderAuth() {
   const authenticated = state.me.authenticated && state.me.is_admin;
   els.logoutBtn?.classList.toggle("hidden", !state.me.authenticated);
   els.loginForm?.classList.toggle("hidden", state.me.authenticated);
+  if (els.loginNavButton) {
+    els.loginNavButton.textContent = state.me.authenticated ? "退出登录" : "登录";
+  }
   els.guildAdminGate?.classList.toggle("hidden", authenticated);
   els.guildAdminLayout?.classList.toggle("hidden", !authenticated);
   els.announcementAdminGate?.classList.toggle("hidden", authenticated);
@@ -1296,7 +1447,10 @@ function renderAuth() {
       : "未登录";
   }
   if ((state.currentView === "guildAdmin" || state.currentView === "announcementAdmin") && !state.me.is_admin) {
-    state.currentView = state.me.authenticated ? "guilds" : "login";
+    state.currentView = "guilds";
+  }
+  if (state.currentView === "login") {
+    state.currentView = "guilds";
   }
   renderView();
   renderGuildSummary();
@@ -1352,7 +1506,12 @@ async function handleLogin(event) {
     }));
     await fetchMe();
     switchView(result?.is_admin ? "guildAdmin" : "guilds");
-    toast("登录成功");
+    openNoticeModal({
+      title: "登录成功",
+      message: "欢迎回来",
+      confirmText: "知道了",
+      autoCloseMs: 1400,
+    });
   } catch (error) {
     toast(error.message);
   }
@@ -1360,15 +1519,18 @@ async function handleLogin(event) {
 
 async function handleLogout() {
   try {
+    state.logoutInProgress = true;
+    disconnectAuthWebSocket();
     await request("/api/auth/logout", { method: "POST", body: "{}" });
     localStorage.removeItem("alliance_user");
     await fetchMe();
-    if (state.currentView === "guildAdmin" || state.currentView === "announcementAdmin") {
-      switchView("login");
-    }
-    toast("已退出登录");
+    state.me = { authenticated: false, user: null, is_admin: false };
+    renderAuth();
+    window.location.href = "/auth.html";
   } catch (error) {
     toast(error.message);
+  } finally {
+    state.logoutInProgress = false;
   }
 }
 
@@ -1936,6 +2098,10 @@ function handleModalDismiss(event) {
   }
   if (target.dataset.closeModal === "danger-confirm") {
     resolveDangerConfirm(false);
+    return;
+  }
+  if (target.dataset.closeModal === "notice") {
+    closeNoticeModal();
   }
 }
 
@@ -1987,6 +2153,9 @@ function handleModalKeydown(event) {
   }
   if (event.key === "Escape" && !els.dangerConfirmModal?.classList.contains("hidden")) {
     resolveDangerConfirm(false);
+  }
+  if (event.key === "Escape" && !els.noticeModal?.classList.contains("hidden")) {
+    closeNoticeModal();
   }
 }
 
@@ -2051,7 +2220,11 @@ function handleGuildDetailToolbarAction(event) {
   const target = rawTarget.closest("[data-action]");
   if (!(target instanceof HTMLElement)) return;
   if (target.dataset.action === "go-login") {
-    switchView(state.me.authenticated ? (state.me.is_admin ? "guildAdmin" : "guilds") : "login");
+    if (!state.me.authenticated) {
+      window.location.href = "/auth.html";
+    } else {
+      switchView(state.me.is_admin ? "guildAdmin" : "guilds");
+    }
     return;
   }
   if (target.dataset.action === "add-member" && state.me.is_admin && state.selectedGuild) {

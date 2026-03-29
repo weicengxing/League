@@ -24,7 +24,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 import openpyxl
 from openpyxl.styles import Font
 
-from auth import AuthHandler, get_current_auth, initialize_auth_database
+from auth import (
+    AuthHandler,
+    get_current_auth,
+    initialize_auth_database,
+    read_session_token_from_handler,
+    register_session_invalidation_notifier,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -42,6 +48,8 @@ sessions = {}
 # WebSocket clients connected for real-time melon updates
 ws_clients = set()
 ws_clients_lock = threading.Lock()
+auth_ws_clients = {}
+auth_ws_clients_lock = threading.Lock()
 WS_MAGIC_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # Thread pool for async database writes
@@ -419,6 +427,9 @@ class AllianceHandler(BaseHTTPRequestHandler):
         if parsed.path == "/ws/melon":
             self.handle_melon_websocket_upgrade()
             return
+        if parsed.path == "/ws/auth":
+            self.handle_auth_websocket_upgrade()
+            return
         if parsed.path.startswith("/api/"):
             self.handle_api_get(parsed)
             return
@@ -561,6 +572,37 @@ class AllianceHandler(BaseHTTPRequestHandler):
             client.read_loop()
         finally:
             unregister_ws_client(client)
+
+    def handle_auth_websocket_upgrade(self):
+        auth = get_current_auth(self)
+        session_token = read_session_token_from_handler(self)
+        if not auth.get("authenticated") or not session_token:
+            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+
+        upgrade_header = (self.headers.get("Upgrade") or "").lower()
+        connection_header = (self.headers.get("Connection") or "").lower()
+        key = self.headers.get("Sec-WebSocket-Key")
+        version = self.headers.get("Sec-WebSocket-Version")
+        if upgrade_header != "websocket" or "upgrade" not in connection_header or not key or version != "13":
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid WebSocket handshake")
+            return
+
+        accept_value = base64.b64encode(
+            hashlib.sha1((key + WS_MAGIC_GUID).encode("utf-8")).digest()
+        ).decode("ascii")
+        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept_value)
+        self.end_headers()
+
+        client = AuthWebSocketClient(self.connection, self.client_address, session_token)
+        register_auth_ws_client(session_token, client)
+        try:
+            client.read_loop()
+        finally:
+            unregister_auth_ws_client(session_token, client)
 
     def handle_api_post(self, parsed):
         if parsed.path == "/api/guilds":
@@ -2085,6 +2127,39 @@ def snapshot_ws_clients():
         return list(ws_clients)
 
 
+def register_auth_ws_client(session_token, client):
+    with auth_ws_clients_lock:
+        auth_ws_clients.setdefault(session_token, set()).add(client)
+
+
+def unregister_auth_ws_client(session_token, client):
+    with auth_ws_clients_lock:
+        clients = auth_ws_clients.get(session_token)
+        if not clients:
+            return
+        clients.discard(client)
+        if not clients:
+            auth_ws_clients.pop(session_token, None)
+
+
+def snapshot_auth_ws_clients(session_token):
+    with auth_ws_clients_lock:
+        return list(auth_ws_clients.get(session_token, set()))
+
+
+def notify_invalidated_session(session_token, session):
+    dead_clients = []
+    message = json.dumps({"type": "session_kicked"}, ensure_ascii=False)
+    for client in snapshot_auth_ws_clients(session_token):
+        try:
+            client.send_text(message)
+            client.close()
+        except Exception:
+            dead_clients.append(client)
+    for client in dead_clients:
+        unregister_auth_ws_client(session_token, client)
+
+
 def broadcast_melon_post(melon_item):
     """Broadcast a new melon post to all connected WebSocket clients."""
     _broadcast_ws_text({
@@ -2193,6 +2268,15 @@ class MelonWebSocketClient:
             pass
         finally:
             self.close()
+
+
+class AuthWebSocketClient(MelonWebSocketClient):
+    def __init__(self, connection, client_address, session_token):
+        super().__init__(connection, client_address)
+        self.session_token = session_token
+
+
+register_session_invalidation_notifier(notify_invalidated_session)
 
 
 def async_save_melon_to_db(title, content, author_name):

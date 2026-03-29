@@ -37,6 +37,7 @@ SMTP_CONFIG = {
 # 注册验证码存储: {email_lower: {"code": "...", "expire": datetime, "sent_at": timestamp}}
 register_verify_codes = {}
 user_sessions = {}
+session_invalidation_notifiers = []
 
 
 def now_text():
@@ -128,6 +129,28 @@ def cleanup_user_sessions():
     current = datetime.now().timestamp()
     expired = [token for token, value in user_sessions.items() if current - value["created_at"] > USER_SESSION_TTL_SECONDS]
     for token in expired:
+        user_sessions.pop(token, None)
+
+
+def register_session_invalidation_notifier(callback):
+    if callback not in session_invalidation_notifiers:
+        session_invalidation_notifiers.append(callback)
+
+
+def invalidate_user_sessions(user_id, is_admin):
+    """单点登录：同账号只保留最新会话"""
+    expired = [
+        token
+        for token, value in user_sessions.items()
+        if value.get("user_id") == user_id and bool(value.get("is_admin")) == bool(is_admin)
+    ]
+    for token in expired:
+        session = user_sessions.get(token)
+        for callback in session_invalidation_notifiers:
+            try:
+                callback(token, session)
+            except Exception:
+                logger.exception("Session invalidation notifier failed: token=%s", token)
         user_sessions.pop(token, None)
 
 
@@ -422,6 +445,7 @@ class AuthHandler:
                     return self.send_json({"error": "用户名或密码错误"}, HTTPStatus.UNAUTHORIZED)
                 
                 # 管理员登录成功
+                invalidate_user_sessions(admin_row["id"], True)
                 token = secrets.token_hex(24)
                 user_sessions[token] = {
                     "user_id": admin_row["id"],
@@ -469,6 +493,7 @@ class AuthHandler:
 
             # 普通用户登录成功
             member_id = ensure_member_binding(connection, row)
+            invalidate_user_sessions(row["id"], False)
             token = secrets.token_hex(24)
             user_sessions[token] = {
                 "user_id": row["id"],

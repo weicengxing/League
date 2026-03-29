@@ -1457,9 +1457,47 @@ td {
   color: rgba(168, 82, 67, 0.82);
 }
 
+.modal__dialog--notice {
+  width: min(420px, calc(100% - 24px));
+  padding: 26px 24px 22px;
+  background:
+    radial-gradient(circle at top right, rgba(240, 233, 206, 0.52), transparent 34%),
+    linear-gradient(180deg, rgba(255, 254, 250, 0.99), rgba(248, 247, 239, 0.98));
+  box-shadow: 0 24px 60px rgba(56, 69, 42, 0.22);
+}
+
 .danger-confirm {
   display: grid;
   gap: 18px;
+}
+
+.notice-modal {
+  display: grid;
+  gap: 16px;
+  text-align: center;
+}
+
+.notice-modal h3 {
+  margin: 0;
+  font-family: "Noto Serif SC", serif;
+  font-size: 1.7rem;
+}
+
+.notice-modal p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.notice-modal__actions {
+  justify-content: center;
+}
+
+.notice-modal__actions .primary-btn {
+  min-width: 140px;
+  min-height: 50px;
+  font-size: 1rem;
 }
 
 .danger-confirm__message {
