@@ -266,12 +266,19 @@ def initialize_database():
                 user_id INTEGER NOT NULL,
                 alliance TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
+                is_read INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
+                read_at TEXT,
                 reviewed_at TEXT,
                 reviewer_id INTEGER
             )
             """
         )
+        admin_role_request_columns = [row["name"] for row in connection.execute("PRAGMA table_info(admin_role_requests)").fetchall()]
+        if "is_read" not in admin_role_request_columns:
+            connection.execute("ALTER TABLE admin_role_requests ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0")
+        if "read_at" not in admin_role_request_columns:
+            connection.execute("ALTER TABLE admin_role_requests ADD COLUMN read_at TEXT")
 
         admin_count = connection.execute("SELECT COUNT(*) AS count FROM admins").fetchone()["count"]
         if admin_count == 0:
@@ -509,7 +516,9 @@ class AllianceHandler(BaseHTTPRequestHandler):
             user = self.require_permission("manage_roles")
             if not user:
                 return
-            self.send_json(self.list_admin_role_requests())
+            query = parse_qs(parsed.query)
+            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            self.send_json(self.list_admin_role_requests(mark_read=mark_read))
             return
         if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
             member_id = parsed.path.strip("/").split("/")[2]
@@ -1796,8 +1805,21 @@ class AllianceHandler(BaseHTTPRequestHandler):
             connection.commit()
         self.send_json({"message": "认证申请已拒绝"})
 
-    def list_admin_role_requests(self):
+    def list_admin_role_requests(self, mark_read=False):
         with open_db() as connection:
+            unread_count = connection.execute(
+                "SELECT COUNT(*) AS count FROM admin_role_requests WHERE status = 'pending' AND is_read = 0"
+            ).fetchone()["count"]
+            if mark_read and unread_count:
+                connection.execute(
+                    """
+                    UPDATE admin_role_requests
+                    SET is_read = 1, read_at = ?
+                    WHERE status = 'pending' AND is_read = 0
+                    """,
+                    (now_text(),),
+                )
+                connection.commit()
             rows = connection.execute(
                 """
                 SELECT r.*, u.username, u.email, u.role AS current_role
@@ -1817,10 +1839,12 @@ class AllianceHandler(BaseHTTPRequestHandler):
                     "current_role": row["current_role"],
                     "alliance": row["alliance"],
                     "status": row["status"],
+                    "is_read": int(row["is_read"] or 0),
                     "created_at": row["created_at"],
                 }
                 for row in rows
-            ]
+            ],
+            "unread_count": 0 if mark_read else unread_count,
         }
 
     def create_admin_role_request(self, current, payload):
@@ -1854,8 +1878,8 @@ class AllianceHandler(BaseHTTPRequestHandler):
             timestamp = now_text()
             connection.execute(
                 """
-                INSERT INTO admin_role_requests (user_id, alliance, status, created_at)
-                VALUES (?, ?, 'pending', ?)
+                INSERT INTO admin_role_requests (user_id, alliance, status, is_read, created_at)
+                VALUES (?, ?, 'pending', 0, ?)
                 """,
                 (user.get("id"), alliance, timestamp),
             )

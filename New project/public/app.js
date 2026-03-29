@@ -251,6 +251,11 @@ function ensureRoleUi() {
     document.querySelector(".board-top")?.appendChild(topActions);
   }
 
+  const roleRequestBtn = document.querySelector("#roleRequestBtn");
+  if (roleRequestBtn && !roleRequestBtn.querySelector("#roleRequestBadge")) {
+    roleRequestBtn.insertAdjacentHTML("beforeend", `<span id="roleRequestBadge" class="btn-badge hidden">0</span>`);
+  }
+
   if (!document.querySelector("#roleApplyModal")) {
     document.body.insertAdjacentHTML("beforeend", `
       <div id="roleApplyModal" class="modal hidden">
