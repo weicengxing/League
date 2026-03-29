@@ -1,5 +1,6 @@
 import hashlib
 import base64
+import html
 import hmac
 import json
 import mimetypes
@@ -12,6 +13,7 @@ import threading
 from cgi import FieldStorage
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from html.parser import HTMLParser
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +48,47 @@ db_executor = ThreadPoolExecutor(max_workers=2)
 
 def now_text():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+class RichTextSanitizer(HTMLParser):
+    allowed_tags = {"b", "strong", "i", "em", "u", "br", "p", "ul", "ol", "li", "a"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag not in self.allowed_tags:
+            return
+        if tag == "a":
+            href = ""
+            for key, value in attrs:
+                if key.lower() == "href" and isinstance(value, str) and value.startswith(("http://", "https://")):
+                    href = html.escape(value, quote=True)
+                    break
+            if href:
+                self.parts.append(f'<a href="{href}" target="_blank" rel="noopener noreferrer">')
+                return
+        self.parts.append(f"<{tag}>")
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in self.allowed_tags:
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self.parts.append(html.escape(data))
+
+    def get_html(self):
+        return "".join(self.parts).strip()
+
+
+def sanitize_rich_html(value):
+    sanitizer = RichTextSanitizer()
+    sanitizer.feed(str(value or ""))
+    sanitizer.close()
+    return sanitizer.get_html()
 
 
 def parse_scaled_number(value, field_name="数值"):
@@ -1046,7 +1089,7 @@ class AllianceHandler(BaseHTTPRequestHandler):
 
     def create_announcement(self, payload):
         title = str(payload.get("title", "")).strip()
-        content = str(payload.get("content", "")).strip()
+        content = sanitize_rich_html(payload.get("content", ""))
         category = str(payload.get("category", "公告")).strip() or "公告"
         if not title or not content:
             self.send_json({"error": "标题和内容不能为空"}, status=HTTPStatus.BAD_REQUEST)
@@ -1070,7 +1113,7 @@ class AllianceHandler(BaseHTTPRequestHandler):
     def create_melon_post(self, user, payload):
         """Create a melon post - called from /api/melon endpoint."""
         title = str(payload.get("title", "")).strip()
-        content = str(payload.get("content", "")).strip()
+        content = sanitize_rich_html(payload.get("content", ""))
         if not title or not content:
             self.send_json({"error": "标题和内容不能为空"}, status=HTTPStatus.BAD_REQUEST)
             return
@@ -1150,7 +1193,7 @@ class AllianceHandler(BaseHTTPRequestHandler):
 
     def update_announcement(self, announcement_id, payload):
         title = str(payload.get("title", "")).strip()
-        content = str(payload.get("content", "")).strip()
+        content = sanitize_rich_html(payload.get("content", ""))
         category = str(payload.get("category", "公告")).strip() or "公告"
         if not title or not content:
             self.send_json({"error": "标题和内容不能为空"}, status=HTTPStatus.BAD_REQUEST)

@@ -138,9 +138,10 @@ button {
 
 .side-filter {
   display: grid;
-  grid-template-columns: minmax(280px, 1.2fr) minmax(220px, 0.8fr) minmax(420px, 1.8fr);
-  gap: 18px;
-  padding: 18px;
+  grid-template-columns: minmax(320px, 520px) minmax(220px, 360px);
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
   border-radius: 30px;
   background: linear-gradient(180deg, rgba(116, 145, 102, 0.96) 0%, rgba(150, 170, 115, 0.96) 100%);
   box-shadow: var(--panel-shadow);
@@ -160,7 +161,7 @@ button {
 .side-filter__action-row {
   display: grid;
   gap: 10px;
-  padding: 14px;
+  padding: 10px;
 }
 
 .side-filter__search-row {
@@ -176,7 +177,7 @@ button {
 .side-filter select,
 .side-filter textarea {
   width: 100%;
-  padding: 13px 14px;
+  padding: 11px 14px;
   border: 1px solid rgba(255, 244, 224, 0.18);
   border-radius: 15px;
   background: rgba(255, 252, 246, 0.98);
@@ -200,30 +201,40 @@ button {
   background: rgba(255, 250, 241, 0.18);
 }
 
-.side-filter__panel--meta {
+.side-filter__panel--summary {
   display: grid;
-  align-content: center;
-  padding: 18px 16px;
-  background: rgba(255, 255, 255, 0.96);
+  align-items: stretch;
 }
 
-.side-filter__panel--meta p {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.side-filter__summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  margin: 8px 0;
-  font-size: 1.05rem;
+  height: 100%;
 }
 
-.hill-nav {
+.side-filter__summary-card {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-content: start;
-  gap: 12px;
-  max-height: 320px;
-  overflow: auto;
-  padding-right: 6px;
+  gap: 8px;
+  align-content: center;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 251, 245, 0.18);
+  border: 1px solid rgba(255, 251, 245, 0.16);
+  color: rgba(255, 252, 246, 0.9);
+}
+
+.side-filter__summary-card span {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 252, 246, 0.68);
+}
+
+.side-filter__summary-card strong {
+  font-size: 1.45rem;
+  line-height: 1;
+  color: #fffdf7;
 }
 
 .hill-item {
@@ -291,6 +302,26 @@ button {
   align-items: center;
   gap: 16px;
   margin-bottom: 18px;
+}
+
+.panel-eyebrow,
+.modal__eyebrow {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8a9271;
+  font-weight: 700;
+}
+
+.admin-card__title {
+  display: grid;
+  gap: 4px;
+}
+
+.panel-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
 }
 
 .panel-card__head--detail {
@@ -763,14 +794,32 @@ button {
   color: var(--text);
 }
 
-.melon-post-form textarea {
-  min-height: 80px;
-  resize: vertical;
-}
-
 .melon-post-form .primary-btn {
   justify-self: end;
   min-width: 120px;
+}
+
+.rich-editor {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid rgba(137, 155, 120, 0.2);
+  background: #fffdf8;
+}
+
+.rich-editor__toolbar {
+  border-bottom: 1px solid rgba(137, 155, 120, 0.16);
+}
+
+.rich-editor__surface {
+  min-height: 120px;
+  padding: 4px 0;
+}
+
+.rich-editor__surface .w-e-text-container,
+.rich-editor__surface .w-e-scroll {
+  min-height: 120px !important;
 }
 
 .melon-post-form:disabled {
@@ -797,8 +846,10 @@ button {
 .ranking-item {
   display: grid;
   grid-template-columns: 48px 1fr auto;
-  gap: 14px;
+  gap: 12px;
   align-items: center;
+  padding: 12px 16px;
+  border-radius: 18px;
 }
 
 .ranking-item__index {
@@ -813,12 +864,27 @@ button {
 }
 
 .ranking-item__meta,
-.feed-item p,
-.feed-item small,
 .melon-revoke-btn,
 .login-state,
 .admin-gate p {
   color: var(--muted);
+}
+
+.ranking-item__name {
+  display: none;
+}
+
+.ranking-item__body {
+  display: grid;
+  gap: 2px;
+}
+
+.ranking-item__meta {
+  font-size: 0.92rem;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ranking-item__power {
@@ -1000,6 +1066,33 @@ button {
   gap: 14px;
 }
 
+.member-form--guild {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 251, 244, 0.94), rgba(244, 247, 235, 0.92));
+  border: 1px solid rgba(141, 160, 123, 0.12);
+}
+
+.member-form--guild label {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 16px rgba(83, 101, 62, 0.06);
+}
+
+.member-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.member-form__actions .primary-btn {
+  min-width: 148px;
+  min-height: 46px;
+}
+
 .member-form label,
 .announcement-form label {
   display: flex;
@@ -1038,6 +1131,22 @@ button {
   background: #f4f6ff;
   color: #6f6994;
   cursor: not-allowed;
+}
+
+#guildAdminLayout > .panel-card:first-child .panel-card__head {
+  margin-bottom: 10px;
+}
+
+#guildAdminLayout > .panel-card:first-child .admin-card__title {
+  gap: 2px;
+}
+
+#guildAdminLayout > .panel-card:first-child .panel-eyebrow {
+  font-size: 0.72rem;
+}
+
+#guildAdminLayout > .panel-card:first-child .admin-card__title h2 {
+  font-size: 1.55rem;
 }
 
 .full {
@@ -1147,6 +1256,36 @@ td {
   box-shadow: 0 24px 64px rgba(35, 43, 114, 0.28);
 }
 
+.modal__dialog--hill {
+  width: min(460px, calc(100% - 24px));
+  padding: 22px;
+  background: linear-gradient(180deg, rgba(255, 254, 250, 0.99), rgba(247, 248, 240, 0.97));
+  box-shadow: 0 24px 60px rgba(49, 60, 34, 0.18);
+}
+
+.modal__dialog--announcement {
+  width: min(560px, calc(100% - 24px));
+  padding: 22px;
+  background:
+    radial-gradient(circle at top right, rgba(231, 238, 219, 0.64), transparent 36%),
+    linear-gradient(180deg, rgba(255, 254, 250, 0.99), rgba(246, 248, 239, 0.97));
+  box-shadow: 0 24px 58px rgba(58, 70, 42, 0.18);
+}
+
+.modal__dialog--preview-card {
+  width: min(760px, calc(100% - 24px));
+}
+
+.modal__dialog--danger {
+  width: min(460px, calc(100% - 24px));
+  padding: 24px;
+  border: 1px solid rgba(186, 95, 82, 0.14);
+  background:
+    radial-gradient(circle at top right, rgba(255, 219, 212, 0.48), transparent 34%),
+    linear-gradient(180deg, rgba(255, 252, 250, 0.99), rgba(250, 243, 240, 0.98));
+  box-shadow: 0 26px 64px rgba(96, 58, 46, 0.2);
+}
+
 .modal__dialog--preview,
 .modal__dialog--image {
   width: min(980px, calc(100% - 24px));
@@ -1164,6 +1303,238 @@ td {
 .modal__head h3 {
   margin: 0;
   font-family: "Noto Serif SC", serif;
+}
+
+.modal__title-block {
+  display: grid;
+  gap: 4px;
+}
+
+.modal__close {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  background: #eef3e7;
+  color: #5c6b50;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.modal-form {
+  display: grid;
+  gap: 16px;
+}
+
+.modal-summary-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #f3f1e6;
+}
+
+.modal-summary-card span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.modal-summary-card strong {
+  font-size: 1.15rem;
+}
+
+.modal-actions,
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.modal-actions--split {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-actions__right {
+  display: flex;
+  gap: 12px;
+}
+
+.danger-btn {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid rgba(190, 82, 82, 0.18);
+  border-radius: 16px;
+  background: rgba(255, 241, 241, 0.92);
+  color: #be5252;
+  font-weight: 800;
+}
+
+.announcement-hub__title {
+  display: grid;
+  gap: 4px;
+}
+
+.announcement-edit-form textarea {
+  min-height: 180px;
+  resize: vertical;
+}
+
+.announcement-edit-form {
+  display: grid;
+  gap: 14px;
+}
+
+.announcement-edit-form label {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(141, 160, 123, 0.12);
+  box-shadow: 0 10px 24px rgba(84, 97, 64, 0.06);
+}
+
+.announcement-edit-form label span {
+  color: #6d775f;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.announcement-edit-form input,
+.announcement-edit-form textarea {
+  width: 100%;
+  border: 1px solid rgba(137, 155, 120, 0.16);
+  border-radius: 14px;
+  background: #fffdf8;
+  color: var(--text);
+  padding: 12px 14px;
+  outline: none;
+}
+
+.announcement-edit-form input {
+  min-height: 48px;
+}
+
+.announcement-edit-form input:focus,
+.announcement-edit-form textarea:focus {
+  border-color: rgba(126, 149, 101, 0.55);
+  box-shadow: 0 0 0 4px rgba(126, 149, 101, 0.12);
+}
+
+.announcement-edit-form .modal-actions {
+  margin-top: 2px;
+  justify-content: flex-end;
+}
+
+.announcement-edit-form .ghost-btn,
+.announcement-edit-form .primary-btn {
+  min-width: 108px;
+  min-height: 48px;
+}
+
+.feed-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.feed-preview__meta {
+  color: var(--muted);
+}
+
+.feed-preview__content {
+  line-height: 1.7;
+  color: #445241;
+}
+
+.feed-preview__content p:first-child {
+  margin-top: 0;
+}
+
+.modal__eyebrow--danger {
+  color: rgba(168, 82, 67, 0.82);
+}
+
+.danger-confirm {
+  display: grid;
+  gap: 18px;
+}
+
+.danger-confirm__message {
+  margin: 0;
+  color: #5f5148;
+  line-height: 1.65;
+}
+
+.feed-item {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 14px 16px 12px;
+  cursor: pointer;
+}
+
+.feed-item strong {
+  line-height: 1.2;
+  padding-right: 180px;
+}
+
+.feed-item__meta {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.feed-item__content {
+  margin: 0;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  padding-right: 72px;
+}
+
+.feed-item__content p,
+.feed-item__content ul,
+.feed-item__content ol,
+.feed-item__content li,
+.feed-item__content div {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
+
+.feed-item__preview-hint {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(111, 140, 87, 0.1);
+  color: #6c7d57;
+  font-size: 0.76rem;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.melon-revoke-btn {
+  position: absolute;
+  right: 74px;
+  bottom: 10px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 241, 241, 0.92);
+  color: #be5252;
+  font-weight: 700;
 }
 
 .modal__actions {

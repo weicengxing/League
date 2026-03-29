@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://unpkg.com/@wangeditor/editor@latest/dist/css/style.css" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -19,24 +20,24 @@
       <div class="board-top__stats">
         <span id="memberCount">0 名成员</span>
         <span id="guildCount">0 个妖盟</span>
-        <span id="hillCount">0 个联盟</span>
       </div>
     </header>
 
     <nav class="top-pills">
       <button class="top-pills__btn is-active" data-view="guilds">妖盟总览</button>
+      <button class="top-pills__btn" data-view="announcement">妖盟公告</button>
       <button class="top-pills__btn" data-view="ranking">排行榜</button>
       <button class="top-pills__btn" data-view="guildAdmin">妖盟管理</button>
       <button class="top-pills__btn" data-view="melon">瓜棚</button>
-      <button class="top-pills__btn" data-view="announcementAdmin">内容发布</button>
-      <button class="top-pills__btn" data-view="login">用户登录</button>
+      <button class="top-pills__btn" data-view="announcementAdmin">公告管理</button>
+      <button class="top-pills__btn" data-view="login">登录</button>
     </nav>
 
     <main class="board-layout">
       <aside class="side-filter">
         <section class="side-filter__panel side-filter__panel--search">
           <div class="side-filter__search-row">
-            <input id="searchInput" type="search" placeholder="搜索联盟或妖盟...">
+            <input id="searchInput" type="search" placeholder="搜索妖盟...">
             <button type="button" class="side-filter__search-btn" id="searchBtn">搜</button>
           </div>
           <div class="side-filter__action-row">
@@ -47,17 +48,36 @@
           </div>
         </section>
 
-        <section class="side-filter__panel side-filter__panel--meta">
-          <p><span>当前联盟:</span><strong id="currentHillLabel">全部联盟</strong></p>
-          <p><span>联盟妖盟数:</span><strong id="currentGuildCount">0</strong></p>
+        <section class="side-filter__panel side-filter__panel--summary">
+          <div class="side-filter__summary-grid">
+            <article class="side-filter__summary-card">
+              <span>当前筛选</span>
+              <strong id="filterSummaryLabel">全部妖盟</strong>
+            </article>
+            <article class="side-filter__summary-card">
+              <span>显示妖盟</span>
+              <strong id="filterGuildCount">0</strong>
+            </article>
+            <article class="side-filter__summary-card">
+              <span>成员总数</span>
+              <strong id="filterMemberCount">0</strong>
+            </article>
+          </div>
         </section>
-
-        <section id="hillList" class="hill-nav"></section>
       </aside>
 
       <section class="main-board">
         <section class="board-panel is-active" data-panel="guilds">
           <div id="guildSummary" class="hill-board-list"></div>
+        </section>
+
+        <section class="board-panel" data-panel="announcement">
+          <article class="panel-card">
+            <div class="panel-card__head">
+              <h2>妖盟公告</h2>
+            </div>
+            <div id="announcementList" class="feed-list"></div>
+          </article>
         </section>
 
         <section class="board-panel" data-panel="guildDetail">
@@ -106,7 +126,11 @@
             </div>
             <form id="melonPostForm" class="melon-post-form">
               <input id="melonTitle" type="text" placeholder="标题" required>
-              <textarea id="melonContent" rows="2" placeholder="分享新鲜事..." required></textarea>
+              <div class="rich-editor">
+                <div id="melonToolbar" class="rich-editor__toolbar"></div>
+                <div id="melonEditor" class="rich-editor__surface"></div>
+              </div>
+              <textarea id="melonContent" rows="2" placeholder="分享新鲜事..." required class="hidden"></textarea>
               <button type="submit" class="primary-btn">发布</button>
             </form>
             <div id="melonList" class="feed-list"></div>
@@ -116,7 +140,7 @@
         <section class="board-panel" data-panel="login">
           <article class="panel-card">
             <div class="panel-card__head">
-              <h2>用户登录</h2>
+              <h2>登录</h2>
               <span id="loginState" class="login-state">未登录</span>
             </div>
             <form id="loginForm" class="stack-form">
@@ -128,7 +152,7 @@
                 <span>密码</span>
                 <input id="password" type="password" placeholder="管理员密码" autocomplete="current-password">
               </label>
-              <button type="submit" class="primary-btn">管理员登录</button>
+              <button type="submit" class="primary-btn">登录</button>
               <p class="form-hint">普通用户请使用统一认证页登录或注册。</p>
               <a class="text-link" href="/auth.html">打开登录 / 注册页</a>
             </form>
@@ -145,13 +169,13 @@
           <div id="guildAdminLayout" class="stack-layout hidden">
             <article class="panel-card">
               <div class="panel-card__head">
-                <div>
+                <div class="admin-card__title">
+                  <p class="panel-eyebrow">Guild Admin</p>
                   <h2 id="memberFormTitle">录入新妖盟</h2>
-                  <p id="memberFormHint" class="panel-hint">填写妖盟基础信息，保存后即可继续补成员。</p>
                 </div>
                 <button id="resetMemberBtn" type="button" class="ghost-btn">清空表单</button>
               </div>
-              <form id="memberForm" class="grid-form">
+              <form id="memberForm" class="member-form member-form--guild">
                 <input id="memberId" type="hidden" value="">
                 <label>
                   <span>联盟名称</span>
@@ -177,7 +201,9 @@
                   <span>盟主昵称</span>
                   <input id="memberName" type="text" placeholder="可留空">
                 </label>
-                <button id="memberSubmitBtn" type="submit" class="primary-btn grid-form__submit">保存妖盟</button>
+                <div class="member-form__actions full">
+                  <button id="memberSubmitBtn" type="submit" class="primary-btn">保存妖盟</button>
+                </div>
               </form>
             </article>
 
@@ -207,49 +233,23 @@
 
         <section class="board-panel" data-panel="announcementAdmin">
           <article id="announcementAdminGate" class="panel-card">
-            <h2>内容发布</h2>
-            <p>请先登录管理员账号，再发布或管理动态。</p>
+            <h2>公告管理</h2>
+            <p>请先登录管理员账号，再发布或管理公告。</p>
           </article>
 
           <div id="announcementAdminLayout" class="stack-layout hidden">
             <article class="panel-card">
               <div class="panel-card__head">
-                <div>
-                  <h2 id="announcementFormTitle">发布内容</h2>
-                  <p class="panel-hint">公告用于正经通知，瓜棚用于日常八卦和轻松内容。</p>
+                <div class="announcement-hub__title">
+                  <h2>公告管理</h2>
+                  <p class="panel-hint">新增、编辑、删除都在这里完成。</p>
                 </div>
-                <button id="resetAnnouncementBtn" type="button" class="ghost-btn">清空表单</button>
-              </div>
-              <form id="announcementForm" class="stack-form">
-                <input id="announcementId" type="hidden" value="">
-                <label>
-                  <span>分类</span>
-                  <select id="announcementCategory">
-                    <option value="公告">公告</option>
-                    <option value="瓜棚">瓜棚</option>
-                  </select>
-                </label>
-                <label>
-                  <span>标题</span>
-                  <input id="announcementTitle" type="text" placeholder="输入标题">
-                </label>
-                <label>
-                  <span>内容</span>
-                  <textarea id="announcementContent" rows="5" placeholder="输入内容"></textarea>
-                </label>
-                <button id="announcementSubmitBtn" type="submit" class="primary-btn">发布内容</button>
-              </form>
-            </article>
-
-            <article class="panel-card">
-              <div class="panel-card__head">
-                <h2>已发布内容</h2>
+                <button id="addAnnouncementBtn" type="button" class="primary-btn">新增公告</button>
               </div>
               <div class="table-wrap">
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th>分类</th>
                       <th>标题</th>
                       <th>发布时间</th>
                       <th>操作</th>
@@ -287,15 +287,6 @@
         </section>
       </section>
     </main>
-
-    <section class="feed-board">
-      <article class="panel-card">
-        <div class="panel-card__head">
-          <h2>联盟公告</h2>
-        </div>
-        <div id="announcementList" class="feed-list"></div>
-      </article>
-    </section>
   </div>
 
   <template id="rankingItemTemplate">
@@ -353,17 +344,19 @@
 
   <div id="hillEditModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="hill-edit"></div>
-    <div class="modal__dialog">
+    <div class="modal__dialog modal__dialog--hill">
       <div class="modal__head">
-        <h3>编辑联盟</h3>
-        <button type="button" class="ghost-btn" data-close-modal="hill-edit">关闭</button>
+        <div class="modal__title-block">
+          <h3>编辑联盟</h3>
+        </div>
+        <button type="button" class="modal__close" data-close-modal="hill-edit" aria-label="关闭">×</button>
       </div>
       <form id="hillEditForm" class="stack-form modal-form">
         <input id="hillEditOldName" type="hidden">
-        <label>
+        <div class="modal-summary-card">
           <span>当前联盟</span>
-          <input id="hillEditCurrentName" type="text" readonly>
-        </label>
+          <strong id="hillEditCurrentName">-</strong>
+        </div>
         <label>
           <span>新联盟名称</span>
           <input id="hillEditName" type="text" placeholder="输入新的联盟名称">
@@ -453,6 +446,72 @@
     </div>
   </div>
 
+  <div id="feedPreviewModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="feed-preview"></div>
+    <div class="modal__dialog modal__dialog--preview-card">
+      <div class="modal__head">
+        <div class="modal__title-block">
+          <p class="modal__eyebrow">内容预览</p>
+          <h3 id="feedPreviewTitle">预览</h3>
+        </div>
+        <button type="button" class="modal__close" data-close-modal="feed-preview" aria-label="关闭">×</button>
+      </div>
+      <div class="feed-preview">
+        <small id="feedPreviewMeta" class="feed-preview__meta"></small>
+        <div id="feedPreviewContent" class="feed-preview__content"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="announcementEditModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="announcement-edit"></div>
+    <div class="modal__dialog modal__dialog--announcement">
+      <div class="modal__head">
+        <div class="modal__title-block">
+          <p class="modal__eyebrow">Announcement</p>
+          <h3 id="announcementEditModalTitle">新增公告</h3>
+        </div>
+        <button type="button" class="modal__close" data-close-modal="announcement-edit" aria-label="关闭">×</button>
+      </div>
+      <form id="announcementEditForm" class="stack-form announcement-edit-form">
+        <input id="announcementEditId" type="hidden" value="">
+        <label>
+          <span>标题</span>
+          <input id="announcementEditTitle" type="text" placeholder="输入公告标题">
+        </label>
+        <label>
+          <span>内容</span>
+          <textarea id="announcementEditContent" rows="8" placeholder="输入公告内容"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" data-close-modal="announcement-edit">取消</button>
+          <button id="announcementEditSubmitBtn" type="submit" class="primary-btn">发布公告</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="dangerConfirmModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="danger-confirm"></div>
+    <div class="modal__dialog modal__dialog--danger">
+      <div class="modal__head">
+        <div class="modal__title-block">
+          <p class="modal__eyebrow modal__eyebrow--danger">Danger Zone</p>
+          <h3 id="dangerConfirmTitle">确认删除</h3>
+        </div>
+        <button type="button" class="modal__close" data-close-modal="danger-confirm" aria-label="关闭">×</button>
+      </div>
+      <div class="danger-confirm">
+        <p id="dangerConfirmMessage" class="danger-confirm__message">此操作不可恢复，请确认是否继续。</p>
+        <div class="modal-actions">
+          <button id="dangerConfirmCancelBtn" type="button" class="ghost-btn" data-close-modal="danger-confirm">取消</button>
+          <button id="dangerConfirmSubmitBtn" type="button" class="danger-btn">确认删除</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/@wangeditor/editor@latest/dist/index.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
