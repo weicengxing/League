@@ -2,6 +2,8 @@
 let melonWs = null;
 let melonReconnectAttempts = 0;
 const MELON_WS_MAX_RECONNECT = 5;
+let melonRichEditor = null;
+let pendingDangerConfirmResolver = null;
 
 function connectMelonWebSocket() {
   if (melonWs && melonWs.readyState === WebSocket.OPEN) {
@@ -125,7 +127,6 @@ const els = {
   allianceName: document.querySelector("#allianceName"),
   memberCount: document.querySelector("#memberCount"),
   guildCount: document.querySelector("#guildCount"),
-  hillCount: document.querySelector("#hillCount"),
   viewButtons: [...document.querySelectorAll(".top-pills__btn")],
   viewPanels: [...document.querySelectorAll(".board-panel")],
   guildSummary: document.querySelector("#guildSummary"),
@@ -143,9 +144,9 @@ const els = {
   searchInput: document.querySelector("#searchInput"),
   searchBtn: document.querySelector("#searchBtn"),
   guildFilter: document.querySelector("#guildFilter"),
-  hillList: document.querySelector("#hillList"),
-  currentHillLabel: document.querySelector("#currentHillLabel"),
-  currentGuildCount: document.querySelector("#currentGuildCount"),
+  filterSummaryLabel: document.querySelector("#filterSummaryLabel"),
+  filterGuildCount: document.querySelector("#filterGuildCount"),
+  filterMemberCount: document.querySelector("#filterMemberCount"),
   backTopBtn: document.querySelector("#backTopBtn"),
   rankingGuildFilter: document.querySelector("#rankingGuildFilter"),
   sortSelect: document.querySelector("#sortSelect"),
@@ -222,18 +223,35 @@ const els = {
   screenshotPreviewModal: document.querySelector("#screenshotPreviewModal"),
   screenshotPreviewTitle: document.querySelector("#screenshotPreviewTitle"),
   screenshotPreviewImage: document.querySelector("#screenshotPreviewImage"),
+  feedPreviewModal: document.querySelector("#feedPreviewModal"),
+  feedPreviewTitle: document.querySelector("#feedPreviewTitle"),
+  feedPreviewMeta: document.querySelector("#feedPreviewMeta"),
+  feedPreviewContent: document.querySelector("#feedPreviewContent"),
   adminMemberTable: document.querySelector("#adminMemberTable"),
-  announcementForm: document.querySelector("#announcementForm"),
-  announcementFormTitle: document.querySelector("#announcementFormTitle"),
-  announcementSubmitBtn: document.querySelector("#announcementSubmitBtn"),
-  resetAnnouncementBtn: document.querySelector("#resetAnnouncementBtn"),
+  addAnnouncementBtn: document.querySelector("#addAnnouncementBtn"),
   adminAnnouncementTable: document.querySelector("#adminAnnouncementTable"),
+  announcementEditModal: document.querySelector("#announcementEditModal"),
+  announcementEditForm: document.querySelector("#announcementEditForm"),
+  announcementEditModalTitle: document.querySelector("#announcementEditModalTitle"),
+  announcementEditId: document.querySelector("#announcementEditId"),
+  announcementEditTitle: document.querySelector("#announcementEditTitle"),
+  announcementEditContent: document.querySelector("#announcementEditContent"),
+  announcementEditSubmitBtn: document.querySelector("#announcementEditSubmitBtn"),
+  dangerConfirmModal: document.querySelector("#dangerConfirmModal"),
+  dangerConfirmTitle: document.querySelector("#dangerConfirmTitle"),
+  dangerConfirmMessage: document.querySelector("#dangerConfirmMessage"),
+  dangerConfirmSubmitBtn: document.querySelector("#dangerConfirmSubmitBtn"),
+  dangerConfirmCancelBtn: document.querySelector("#dangerConfirmCancelBtn"),
+  melonEditor: document.querySelector("#melonEditor"),
+  melonToolbar: document.querySelector("#melonToolbar"),
+  melonContent: document.querySelector("#melonContent"),
 };
 
 setupUserProfileUI();
 setupGuildEditUI();
 setupMemberEditUI();
 ensureRoleUi();
+setupRichTextEditors();
 bindEvents();
 boot();
 
@@ -394,6 +412,33 @@ function setupMemberEditUI() {
   els.memberEditDamageReduction = document.querySelector("#memberEditDamageReduction");
 }
 
+function setupRichTextEditors() {
+  const editorRoot = els.melonEditor;
+  const toolbarRoot = els.melonToolbar;
+  if (!editorRoot || !toolbarRoot || !window.wangEditor) return;
+  const WangEditor = window.wangEditor;
+  const { createEditor, createToolbar, i18nChangeLanguage } = WangEditor;
+  i18nChangeLanguage?.("zh-CN");
+  melonRichEditor = createEditor({
+    selector: "#melonEditor",
+    html: "",
+    config: {
+      placeholder: "分享新鲜事...",
+      onChange(editor) {
+        if (els.melonContent) {
+          els.melonContent.value = normalizeRichEditorHtml(editor.getHtml());
+        }
+      },
+    },
+    mode: "simple",
+  });
+  createToolbar({
+    editor: melonRichEditor,
+    selector: "#melonToolbar",
+    mode: "simple",
+  });
+}
+
 function bindEvents() {
   els.searchInput?.addEventListener("input", (event) => {
     state.search = event.target.value.trim();
@@ -420,16 +465,6 @@ function bindEvents() {
     state.guildFilter = event.target.value;
     state.hillBrowsePage = 1;
     showBrowseView();
-    renderGuildSummary();
-  });
-
-  els.hillList?.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-hill]");
-    if (!(button instanceof HTMLElement)) return;
-    state.hillFilter = button.dataset.hill || "all";
-    state.hillBrowsePage = 1;
-    showBrowseView();
-    ensureGuildPages();
     renderGuildFilters();
     renderGuildSummary();
   });
@@ -481,13 +516,17 @@ function bindEvents() {
   els.resetMemberBtn?.addEventListener("click", resetMemberForm);
   els.guildEditForm?.addEventListener("submit", handleGuildEditSubmit);
   els.memberEditForm?.addEventListener("submit", handleMemberEditSubmit);
-  els.announcementForm?.addEventListener("submit", handleAnnouncementSubmit);
-  els.resetAnnouncementBtn?.addEventListener("click", resetAnnouncementForm);
+  els.addAnnouncementBtn?.addEventListener("click", () => openAnnouncementEditModal());
+  els.announcementEditForm?.addEventListener("submit", handleAnnouncementEditSubmit);
   els.adminMemberTable?.addEventListener("click", handleAdminMemberAction);
   els.adminAnnouncementTable?.addEventListener("click", handleAdminAnnouncementAction);
   els.guildDetailList?.addEventListener("click", handleGuildDetailAction);
   els.guildDetailActions?.addEventListener("click", handleGuildDetailToolbarAction);
   els.memberScreenshotInput?.addEventListener("change", handleMemberScreenshotSelected);
+  els.melonList?.addEventListener("click", handleFeedListClick);
+  els.announcementList?.addEventListener("click", handleFeedListClick);
+  els.dangerConfirmSubmitBtn?.addEventListener("click", () => resolveDangerConfirm(true));
+  els.dangerConfirmCancelBtn?.addEventListener("click", () => resolveDangerConfirm(false));
   document.addEventListener("click", handleModalDismiss);
   document.addEventListener("keydown", handleModalKeydown);
   
@@ -518,7 +557,7 @@ function bindEvents() {
     await reviewRoleRequest(roleAction.dataset.id, roleAction.dataset.roleRequestAction);
   });
   
-  // 鍒涘缓闅愯棌鐨勬枃浠惰緭鍏ユ鐢ㄤ簬Excel瀵煎叆
+  // 创建隐藏的文件输入框用于 Excel 导入
   const excelInput = document.createElement("input");
   excelInput.type = "file";
   excelInput.accept = ".xlsx,.xls";
@@ -544,13 +583,15 @@ async function boot() {
 async function handleMelonPostSubmit(event) {
   event.preventDefault();
   const titleInput = document.querySelector("#melonTitle");
-  const contentInput = document.querySelector("#melonContent");
+  syncMelonEditorValue();
+  const contentInput = els.melonContent;
   const form = document.querySelector("#melonPostForm");
   
   const title = titleInput?.value.trim();
-  const content = contentInput?.value.trim();
+  const content = normalizeRichEditorHtml(contentInput?.value.trim());
+  const plainContent = htmlToPlainText(content);
   
-  if (!title || !content) {
+  if (!title || !plainContent) {
     toast("标题和内容不能为空");
     return;
   }
@@ -577,6 +618,7 @@ async function handleMelonPostSubmit(event) {
   
   // Clear form
   form?.reset();
+  resetMelonEditor();
   
   try {
     const result = await request("/api/melon", {
@@ -789,9 +831,6 @@ function renderDashboard() {
   if (els.guildCount) {
     els.guildCount.textContent = `${guildCount} 个妖盟`;
   }
-  if (els.hillCount) {
-    els.hillCount.textContent = `${hills.length} 个联盟`;
-  }
 }
 
 function renderView() {
@@ -817,7 +856,6 @@ function showBrowseView() {
 
 function renderGuildFilters() {
   const hills = getSearchMatchedHills();
-  const hillNames = hills.map((hill) => hill.name);
   const guildNames = [
     ...new Set(
       hills
@@ -854,37 +892,23 @@ function renderGuildFilters() {
     els.rankingGuildFilter.value = state.rankingGuildFilter;
   }
 
-  if (els.currentHillLabel) {
-    els.currentHillLabel.textContent = state.hillFilter === "all" ? "全部联盟" : state.hillFilter;
-  }
-
-  if (els.currentGuildCount) {
-    const currentGuildCount = hills
-      .filter((hill) => state.hillFilter === "all" || hill.name === state.hillFilter)
-      .reduce((sum, hill) => sum + hill.guilds.length, 0);
-    els.currentGuildCount.textContent = String(currentGuildCount);
-  }
-
-  if (false && els.guildEditHill) {
-    const currentValue = els.guildEditHill.value;
-    els.guildEditHill.innerHTML = hillNames
-      .map((hillName) => `<option value="${escapeHtml(hillName)}">${escapeHtml(hillName)}</option>`)
-      .join("");
-    if (hillNames.includes(currentValue)) {
-      els.guildEditHill.value = currentValue;
+  const visibleGuilds = hills
+    .flatMap((hill) => hill.guilds || [])
+    .filter((guild) => state.guildFilter === "all" || guild.key === state.guildFilter);
+  const visibleMembers = visibleGuilds.reduce((sum, guild) => {
+    if (typeof guild.count === "number") {
+      return sum + guild.count;
     }
+    return sum + state.members.filter((member) => buildGuildKey(member) === guild.key).length;
+  }, 0);
+  if (els.filterSummaryLabel) {
+    els.filterSummaryLabel.textContent = state.guildFilter === "all" ? "全部妖盟" : getGuildLabelFromKey(state.guildFilter, hills);
   }
-
-  if (els.hillList) {
-    els.hillList.innerHTML = [
-      `<button type="button" class="hill-item ${state.hillFilter === "all" ? "is-active" : ""}" data-hill="all"><span>全部联盟</span><span class="hill-item__count">${hills.length}</span></button>`,
-      ...hills.map((hill) => `
-        <button type="button" class="hill-item ${state.hillFilter === hill.name ? "is-active" : ""}" data-hill="${escapeHtml(hill.name)}">
-          <span>${escapeHtml(hill.name)}</span>
-          <span class="hill-item__count">${hill.guilds.length}</span>
-        </button>
-      `),
-    ].join("");
+  if (els.filterGuildCount) {
+    els.filterGuildCount.textContent = String(visibleGuilds.length);
+  }
+  if (els.filterMemberCount) {
+    els.filterMemberCount.textContent = String(visibleMembers);
   }
 
   ensureGuildPages(hills);
@@ -1139,7 +1163,7 @@ function getVisibleHills() {
 }
 
 function getPagedGuilds(hill) {
-  const pageSize = 6;
+  const pageSize = 3;
   const totalPages = Math.max(1, Math.ceil(hill.guilds.length / pageSize));
   const currentPage = Math.min(state.guildPageByHill[hill.name] || 1, totalPages);
   const start = (currentPage - 1) * pageSize;
@@ -1164,7 +1188,7 @@ function renderHillPagination(hill) {
 
 function ensureGuildPages(hills = getSearchMatchedHills()) {
   for (const hill of hills) {
-    const totalPages = Math.max(1, Math.ceil(hill.guilds.length / 6));
+    const totalPages = Math.max(1, Math.ceil(hill.guilds.length / 3));
     const currentPage = state.guildPageByHill[hill.name] || 1;
     state.guildPageByHill[hill.name] = Math.min(currentPage, totalPages);
   }
@@ -1282,8 +1306,7 @@ function renderRanking() {
     const fragment = els.rankingItemTemplate.content.cloneNode(true);
     fragment.querySelector(".ranking-item__index").textContent = String((page.currentPage - 1) * page.pageSize + index + 1);
     fragment.querySelector(".ranking-item__name").textContent = member.name;
-    fragment.querySelector(".ranking-item__meta").textContent = `${member.hill || "默认联盟"} · ${getGuildDisplayName(member)} · 等级 ${member.role || "-"} · ${member.realm || "-"}`;
-    fragment.querySelector(".ranking-item__power").textContent = formatNumber(member.power);
+    fragment.querySelector(".ranking-item__meta").textContent = `${member.hill || "默认联盟"} · ${getGuildDisplayName(member)} · 等级 ${member.role || "-"} · ${member.realm || "-"}`;    fragment.querySelector(".ranking-item__power").textContent = formatNumber(member.power);
     els.rankingList.appendChild(fragment);
   });
   els.rankingList.insertAdjacentHTML("beforeend", renderSimplePagination("ranking-page", page));
@@ -1316,13 +1339,15 @@ function renderFeedGroup(items, emptyText) {
         canRevoke = false;
       }
     }
+    const renderedContent = renderStoredContent(item.content || "");
+    const plainText = escapeHtml(htmlToPlainText(renderedContent));
     return `
-      <article class="feed-item" data-melon-id="${item.id}">
+      <article class="feed-item" data-melon-id="${item.id}" data-feed-preview="${item.id}">
+        <small class="feed-item__meta">${escapeHtml(item.created_at || "")}${item.author ? ` · ${escapeHtml(item.author)}` : ""}</small>
         <strong>${escapeHtml(item.title)}</strong>
-        <p>${escapeHtml(item.content)}</p>
-        <small>${escapeHtml(item.created_at || "")}${item.author ? " · " + escapeHtml(item.author) : ""}</small>
-        ${canRevoke ? `<button type="button" class="melon-revoke-btn" data-melon-revoke="${item.id}">撤回</button>` : ""}
-      </article>
+        <div class="feed-item__content" title="${plainText}">${renderedContent}</div>
+        <span class="feed-item__preview-hint">查看详情</span>
+        ${canRevoke ? `<button type="button" class="melon-revoke-btn" data-melon-revoke="${item.id}">撤回</button>` : ""}      </article>
     `;
   }).join("");
 }
@@ -1637,38 +1662,50 @@ function resetMemberForm() {
   document.querySelector("#memberId").value = "";
   document.querySelector("#memberAlliance").value = state.dashboard?.alliance_name || "默认联盟";
   setGuildFormEditMode(false);
-  if (els.memberFormTitle) els.memberFormTitle.textContent = "新增妖盟";
-  if (els.memberFormHint) els.memberFormHint.textContent = "填写妖盟基础信息，保存后即可继续补成员。";
+  if (els.memberFormTitle) els.memberFormTitle.textContent = "录入新妖盟";
   if (els.memberSubmitBtn) els.memberSubmitBtn.textContent = "保存妖盟";
 }
 
-async function handleAnnouncementSubmit(event) {
+function openAnnouncementEditModal(item = null) {
+  if (!els.announcementEditModal) return;
+  if (els.announcementEditModalTitle) {
+    els.announcementEditModalTitle.textContent = item ? `编辑公告 · ${item.title}` : "新增公告";
+  }
+  if (els.announcementEditId) els.announcementEditId.value = item?.id || "";
+  if (els.announcementEditTitle) els.announcementEditTitle.value = item?.title || "";
+  if (els.announcementEditContent) els.announcementEditContent.value = contentToEditorText(item?.content || "");
+  if (els.announcementEditSubmitBtn) {
+    els.announcementEditSubmitBtn.textContent = item ? "更新公告" : "发布公告";
+  }
+  els.announcementEditModal.classList.remove("hidden");
+  window.setTimeout(() => els.announcementEditTitle?.focus(), 0);
+}
+
+function closeAnnouncementEditModal() {
+  els.announcementEditModal?.classList.add("hidden");
+  els.announcementEditForm?.reset();
+  if (els.announcementEditId) els.announcementEditId.value = "";
+}
+
+async function handleAnnouncementEditSubmit(event) {
   event.preventDefault();
   const payload = {
-    category: document.querySelector("#announcementCategory").value,
-    title: document.querySelector("#announcementTitle").value.trim(),
-    content: document.querySelector("#announcementContent").value.trim(),
+    category: "公告",
+    title: els.announcementEditTitle?.value.trim() || "",
+    content: els.announcementEditContent?.value.trim() || "",
   };
-  const announcementId = document.querySelector("#announcementId").value;
+  const announcementId = els.announcementEditId?.value || "";
   const method = announcementId ? "PUT" : "POST";
   const url = announcementId ? `/api/announcements/${announcementId}` : "/api/announcements";
 
   try {
     await request(url, { method, body: JSON.stringify(payload) });
-    resetAnnouncementForm();
+    closeAnnouncementEditModal();
     await Promise.all([loadDashboard(), fetchAnnouncements()]);
-    toast(announcementId ? "内容更新成功" : "内容发布成功");
+    toast(announcementId ? "公告更新成功" : "公告发布成功");
   } catch (error) {
     toast(error.message);
   }
-}
-
-function resetAnnouncementForm() {
-  els.announcementForm?.reset();
-  document.querySelector("#announcementId").value = "";
-  document.querySelector("#announcementCategory").value = "公告";
-  if (els.announcementFormTitle) els.announcementFormTitle.textContent = "发布内容";
-  if (els.announcementSubmitBtn) els.announcementSubmitBtn.textContent = "发布内容";
 }
 
 function renderAdminMembers() {
@@ -1697,13 +1734,13 @@ function renderAdminMembers() {
 
 function renderAdminAnnouncements() {
   if (!els.adminAnnouncementTable) return;
-  if (!state.announcements.length) {
-    els.adminAnnouncementTable.innerHTML = `<tr><td colspan="4">暂无动态内容。</td></tr>`;
+  const announcementItems = state.announcements.filter((item) => item.category === "公告");
+  if (!announcementItems.length) {
+    els.adminAnnouncementTable.innerHTML = `<tr><td colspan="3">暂无公告内容。</td></tr>`;
     return;
   }
-  els.adminAnnouncementTable.innerHTML = state.announcements.map((item) => `
+  els.adminAnnouncementTable.innerHTML = announcementItems.map((item) => `
     <tr>
-      <td>${escapeHtml(item.category)}</td>
       <td>${escapeHtml(item.title)}</td>
       <td>${escapeHtml(item.created_at || "")}</td>
       <td>
@@ -1769,7 +1806,7 @@ function openHillEditModal(hillName) {
   if (!els.hillEditModal || !els.hillEditOldName || !els.hillEditName) return;
   els.hillEditOldName.value = hillName;
   const currentField = document.querySelector("#hillEditCurrentName");
-  if (currentField) currentField.value = hillName;
+  if (currentField) currentField.textContent = hillName;
   els.hillEditName.value = hillName;
   els.hillEditModal.classList.remove("hidden");
   window.setTimeout(() => els.hillEditName?.focus(), 0);
@@ -1946,7 +1983,12 @@ async function deleteMemberScreenshot(member) {
     toast("当前成员还没有截图");
     return;
   }
-  if (!confirm(`确定删除 ${member.name} 的截图吗？`)) {
+  const confirmed = await openDangerConfirm({
+    title: "删除截图",
+    message: `确定删除 ${member.name} 的截图吗？`,
+    confirmText: "确认删除",
+  });
+  if (!confirmed) {
     return;
   }
   try {
@@ -2030,7 +2072,12 @@ async function handleHillDelete() {
     return;
   }
 
-  if (!confirm(`确定删除联盟 ${hillName} 吗？该联盟下的所有妖盟和成员都会一起删除。`)) {
+  const confirmed = await openDangerConfirm({
+    title: "删除联盟",
+    message: `确定删除联盟 ${hillName} 吗？该联盟下的所有妖盟和成员都会一起删除。`,
+    confirmText: "确认删除",
+  });
+  if (!confirmed) {
     return;
   }
 
@@ -2054,8 +2101,32 @@ async function handleHillDelete() {
   }
 }
 
+function resolveDangerConfirm(confirmed) {
+  const resolver = pendingDangerConfirmResolver;
+  pendingDangerConfirmResolver = null;
+  els.dangerConfirmModal?.classList.add("hidden");
+  if (resolver) resolver(confirmed);
+}
+
+function openDangerConfirm({
+  title = "危险操作确认",
+  message = "此操作不可撤销，请再次确认。",
+  confirmText = "确认继续",
+} = {}) {
+  if (!els.dangerConfirmModal) return Promise.resolve(false);
+  if (els.dangerConfirmTitle) els.dangerConfirmTitle.textContent = title;
+  if (els.dangerConfirmMessage) els.dangerConfirmMessage.textContent = message;
+  if (els.dangerConfirmSubmitBtn) els.dangerConfirmSubmitBtn.textContent = confirmText;
+  els.dangerConfirmModal.classList.remove("hidden");
+  return new Promise((resolve) => {
+    pendingDangerConfirmResolver = resolve;
+  });
+}
+
 function handleModalDismiss(event) {
-  const target = event.target.closest("[data-close-modal]");
+  const rawTarget = event.target;
+  if (!(rawTarget instanceof Element)) return;
+  const target = rawTarget.closest("[data-close-modal]");
   if (!(target instanceof HTMLElement)) return;
   if (target.dataset.closeModal === "guild-edit") {
     closeGuildEditModal();
@@ -2083,6 +2154,18 @@ function handleModalDismiss(event) {
   }
   if (target.dataset.closeModal === "role-apply") {
     closeRoleApplyModal();
+    return;
+  }
+  if (target.dataset.closeModal === "feed-preview") {
+    closeFeedPreviewModal();
+    return;
+  }
+  if (target.dataset.closeModal === "announcement-edit") {
+    closeAnnouncementEditModal();
+    return;
+  }
+  if (target.dataset.closeModal === "danger-confirm") {
+    resolveDangerConfirm(false);
   }
 }
 
@@ -2113,6 +2196,15 @@ function handleModalKeydown(event) {
   }
   if (event.key === "Escape" && !els.screenshotPreviewModal?.classList.contains("hidden")) {
     closeScreenshotPreviewModal();
+  }
+  if (event.key === "Escape" && !els.feedPreviewModal?.classList.contains("hidden")) {
+    closeFeedPreviewModal();
+  }
+  if (event.key === "Escape" && !els.announcementEditModal?.classList.contains("hidden")) {
+    closeAnnouncementEditModal();
+  }
+  if (event.key === "Escape" && !els.dangerConfirmModal?.classList.contains("hidden")) {
+    resolveDangerConfirm(false);
   }
 }
 
@@ -2172,7 +2264,9 @@ async function handleMemberEditSubmit(event) {
 }
 
 function handleGuildDetailToolbarAction(event) {
-  const target = event.target.closest("[data-action]");
+  const rawTarget = event.target;
+  if (!(rawTarget instanceof Element)) return;
+  const target = rawTarget.closest("[data-action]");
   if (!(target instanceof HTMLElement)) return;
   if (target.dataset.action === "go-login") {
     switchView(state.me.authenticated ? (hasPermission("manage_guilds") ? "guildAdmin" : "guilds") : "login");
@@ -2186,8 +2280,10 @@ function handleGuildDetailToolbarAction(event) {
   }
 }
 
-function handleGuildDetailAction(event) {
-  const target = event.target.closest("[data-action]");
+async function handleGuildDetailAction(event) {
+  const rawTarget = event.target;
+  if (!(rawTarget instanceof Element)) return;
+  const target = rawTarget.closest("[data-action]");
   if (!(target instanceof HTMLElement)) return;
   if (target.dataset.action === "apply-cert") {
     const memberId = target.dataset.id;
@@ -2244,8 +2340,14 @@ function handleGuildDetailAction(event) {
     openMemberEditModal(member, buildGuildKey(member));
     return;
   }
-  if (target.dataset.action === "delete-detail-member" && confirm(`确定删除成员 ${member.name} 吗？`)) {
+  if (target.dataset.action === "delete-detail-member") {
     if (!canManageAlliance(member.alliance || member.hill || "")) return;
+    const confirmed = await openDangerConfirm({
+      title: "删除成员",
+      message: `确定删除成员 ${member.name} 吗？`,
+      confirmText: "确认删除",
+    });
+    if (!confirmed) return;
     request(`/api/members/${member.id}`, { method: "DELETE" })
       .then(async () => {
         await refreshAll();
@@ -2266,8 +2368,10 @@ function setGuildFormEditMode(isEdit) {
   }
 }
 
-function handleAdminMemberAction(event) {
-  const target = event.target;
+async function handleAdminMemberAction(event) {
+  const rawTarget = event.target;
+  if (!(rawTarget instanceof Element)) return;
+  const target = rawTarget.closest("[data-action]");
   if (!(target instanceof HTMLElement)) return;
   const { action, guildKey } = target.dataset;
   if (!action || !guildKey) return;
@@ -2279,7 +2383,13 @@ function handleAdminMemberAction(event) {
     return;
   }
 
-  if (action === "delete-member" && confirm(`确定删除妖盟 ${guildRow.displayName} 吗？`)) {
+  if (action === "delete-member") {
+    const confirmed = await openDangerConfirm({
+      title: "删除妖盟",
+      message: `确定删除妖盟 ${guildRow.displayName} 吗？`,
+      confirmText: "确认删除",
+    });
+    if (!confirmed) return;
     request(`/api/guilds/${encodeURIComponent(guildKey)}`, { method: "DELETE" })
       .then(async () => {
         await refreshAll();
@@ -2289,8 +2399,10 @@ function handleAdminMemberAction(event) {
   }
 }
 
-function handleAdminAnnouncementAction(event) {
-  const target = event.target;
+async function handleAdminAnnouncementAction(event) {
+  const rawTarget = event.target;
+  if (!(rawTarget instanceof Element)) return;
+  const target = rawTarget.closest("[data-action]");
   if (!(target instanceof HTMLElement)) return;
   const { action, id } = target.dataset;
   if (!action || !id) return;
@@ -2298,22 +2410,21 @@ function handleAdminAnnouncementAction(event) {
   if (!item) return;
 
   if (action === "edit-announcement") {
-    document.querySelector("#announcementId").value = item.id;
-    document.querySelector("#announcementCategory").value = item.category;
-    document.querySelector("#announcementTitle").value = item.title;
-    document.querySelector("#announcementContent").value = item.content;
-    els.announcementFormTitle.textContent = `编辑内容 · ${item.title}`;
-    els.announcementSubmitBtn.textContent = "更新内容";
-    state.currentView = "announcementAdmin";
-    renderView();
+    openAnnouncementEditModal(item);
     return;
   }
 
-  if (action === "delete-announcement" && confirm(`确定删除 ${item.title} 吗？`)) {
+  if (action === "delete-announcement") {
+    const confirmed = await openDangerConfirm({
+      title: "删除公告",
+      message: `确定删除 ${item.title} 吗？`,
+      confirmText: "确认删除",
+    });
+    if (!confirmed) return;
     request(`/api/announcements/${id}`, { method: "DELETE" })
       .then(async () => {
         await Promise.all([loadDashboard(), fetchAnnouncements()]);
-        toast("内容删除成功");
+        toast("公告删除成功");
       })
       .catch((error) => toast(error.message));
   }
@@ -2322,8 +2433,9 @@ function handleAdminAnnouncementAction(event) {
 document.addEventListener("click", (event) => {
   const hillEditButton = event.target.closest("[data-edit-hill]");
   if (hillEditButton instanceof HTMLElement) {
-    if (!canManageAlliance(member.alliance || member.hill || "")) return;
-    openHillEditModal(hillEditButton.dataset.editHill || "");
+    const hillName = hillEditButton.dataset.editHill || "";
+    if (!canManageAlliance(hillName)) return;
+    openHillEditModal(hillName);
     return;
   }
 
@@ -2500,6 +2612,40 @@ function trimTrailingZeros(text) {
   return String(text).replace(/\.?0+$/, "");
 }
 
+function getShortGuildName(member) {
+  const guildName = String(member?.guild || "").replace(/妖盟$/u, "").trim();
+  return guildName || getGuildDisplayName(member).replace(/妖盟$/u, "").trim();
+}
+
+function normalizeRichEditorHtml(html) {
+  return String(html || "")
+    .replace(/<div>/gi, "<p>")
+    .replace(/<\/div>/gi, "</p>")
+    .trim();
+}
+
+function htmlToPlainText(html) {
+  const div = document.createElement("div");
+  div.innerHTML = String(html || "");
+  return (div.textContent || div.innerText || "").replace(/\s+/g, " ").trim();
+}
+
+function renderStoredContent(content) {
+  const text = String(content || "");
+  if (!/<[a-z][\s\S]*>/i.test(text)) {
+    return escapeHtml(text).replace(/\n/g, "<br>");
+  }
+  return text;
+}
+
+function contentToEditorText(content) {
+  const text = String(content || "");
+  if (!/<[a-z][\s\S]*>/i.test(text)) {
+    return text;
+  }
+  return htmlToPlainText(text);
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -2523,22 +2669,7 @@ function ensureVisibleHillPage(hills) {
 }
 
 function renderVisibleHillPagination(hills) {
-  const totalPages = hills.length;
-  if (totalPages <= 1) return "";
-  const currentHill = hills[state.hillBrowsePage - 1];
-  return `
-    <div class="hill-browse-bar">
-      <div class="hill-browse-bar__meta">
-        <strong>联盟切换</strong>
-        <span>${escapeHtml(currentHill?.name || "")}</span>
-      </div>
-      <div class="hill-pagination">
-        <button type="button" class="hill-pagination__btn" data-pagination-kind="hill-browse-page" data-page-action="prev" ${state.hillBrowsePage === 1 ? "disabled" : ""}>上一个联盟</button>
-        <span class="hill-pagination__info">第 ${state.hillBrowsePage} / ${totalPages} 个联盟</span>
-        <button type="button" class="hill-pagination__btn" data-pagination-kind="hill-browse-page" data-page-action="next" ${state.hillBrowsePage === totalPages ? "disabled" : ""}>下一个联盟</button>
-      </div>
-    </div>
-  `;
+  return "";
 }
 
 renderGuildSummary = function renderGuildSummaryOverride() {
@@ -2553,7 +2684,6 @@ renderGuildSummary = function renderGuildSummaryOverride() {
   const displayHills = state.hillFilter === "all" ? [hills[state.hillBrowsePage - 1]] : hills;
 
   els.guildSummary.innerHTML = `
-    ${state.hillFilter === "all" ? renderVisibleHillPagination(hills) : ""}
     ${displayHills.map((hill) => `
       <section class="hill-section">
         <header class="hill-section__head">
@@ -2570,6 +2700,59 @@ renderGuildSummary = function renderGuildSummaryOverride() {
     `).join("")}
   `;
 };
+
+function handleFeedListClick(event) {
+  const rawTarget = event.target;
+  if (!(rawTarget instanceof Element)) return;
+  const revokeBtn = rawTarget.closest("[data-melon-revoke]");
+  if (revokeBtn instanceof HTMLElement) {
+    event.stopPropagation();
+    const melonId = revokeBtn.dataset.melonRevoke;
+    if (melonId) {
+      handleMelonRevoke(melonId);
+      return;
+    }
+  }
+  const previewTrigger = rawTarget.closest("[data-feed-preview]");
+  if (previewTrigger instanceof HTMLElement) {
+    const itemId = previewTrigger.dataset.feedPreview;
+    const item = state.announcements.find((entry) => String(entry.id) === String(itemId));
+    if (item) {
+      openFeedPreviewModal(item);
+    }
+  }
+}
+
+function openFeedPreviewModal(item) {
+  if (!els.feedPreviewModal || !item) return;
+  if (els.feedPreviewTitle) els.feedPreviewTitle.textContent = item.title || "预览";
+  if (els.feedPreviewMeta) {
+    els.feedPreviewMeta.textContent = `${item.created_at || ""}${item.author ? ` · ${item.author}` : ""}`;
+  }
+  if (els.feedPreviewContent) {
+    els.feedPreviewContent.innerHTML = renderStoredContent(item.content || "");
+  }
+  els.feedPreviewModal.classList.remove("hidden");
+}
+
+function closeFeedPreviewModal() {
+  els.feedPreviewModal?.classList.add("hidden");
+}
+
+function syncMelonEditorValue() {
+  if (melonRichEditor && els.melonContent) {
+    els.melonContent.value = normalizeRichEditorHtml(melonRichEditor.getHtml());
+  }
+}
+
+function resetMelonEditor() {
+  if (melonRichEditor) {
+    melonRichEditor.setHtml("");
+  }
+  if (els.melonContent) {
+    els.melonContent.value = "";
+  }
+}
 
 
 
