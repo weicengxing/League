@@ -335,6 +335,19 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
     }
+    .grid-two--compact {
+      gap: 14px;
+      align-items: start;
+      grid-template-columns: 0.9fr 0.9fr;
+    }
+    .grid-two--compact label {
+      gap: 6px;
+      font-size: 14px;
+    }
+    .grid-two--compact input {
+      padding: 14px 16px;
+      min-height: 74px;
+    }
     .auth-note { margin-top: 24px; }
     .alert { display: none; }
     .alert.is-visible {
@@ -423,13 +436,12 @@
             <h2>初立名籍，结缘入道</h2>
             <p>注册成功后会自动切回登录页。建议用户名与成员昵称一致，方便系统自动关联你的个人档案。</p>
             <form id="registerForm">
-              <div class="grid-two">
+              <div class="grid-two grid-two--compact">
                 <label>修士名号
                   <input id="registerUsername" name="username" type="text" placeholder="3-20 位用户名" required>
                 </label>
                 <label>常用灵邮
                   <input id="registerEmail" name="email" type="email" placeholder="仅支持 qq/outlook/gmail" required>
-                  <small style="color: var(--gold); font-size: 12px; margin-top: 4px;">仅支持 @qq.com / @outlook.com / @gmail.com</small>
                 </label>
               </div>
               <label>邮箱验证码
