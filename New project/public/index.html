@@ -27,6 +27,7 @@
 
     <nav class="top-pills">
       <button class="top-pills__btn is-active" data-view="guilds">妖盟总览</button>
+      <button class="top-pills__btn" data-view="profile">个人主页</button>
       <button class="top-pills__btn" data-view="announcement">妖盟公告</button>
       <button class="top-pills__btn" data-view="ranking">排行榜</button>
       <button class="top-pills__btn" data-view="guildAdmin">妖盟管理</button>
@@ -71,6 +72,15 @@
       <section class="main-board">
         <section class="board-panel is-active" data-panel="guilds">
           <div id="guildSummary" class="hill-board-list"></div>
+        </section>
+
+        <section class="board-panel" data-panel="profile">
+          <article class="panel-card">
+            <div class="panel-card__head">
+              <h2>个人主页</h2>
+            </div>
+            <div id="profilePage" class="profile-page"></div>
+          </article>
         </section>
 
         <section class="board-panel" data-panel="announcement">
@@ -541,6 +551,7 @@
   </div>
 
   <input id="memberScreenshotInput" type="file" accept="image/*" class="hidden">
+  <input id="profileAvatarInput" type="file" accept="image/*" class="hidden">
 
   <div id="dangerConfirmModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="danger-confirm"></div>

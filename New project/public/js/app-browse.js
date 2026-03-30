@@ -5,6 +5,7 @@
   els.viewPanels.forEach((panel) => {
     panel.classList.toggle("is-active", panel.dataset.panel === state.currentView);
   });
+  renderProfilePage();
   renderGuildDetail();
 }
 
@@ -17,6 +18,345 @@ function showBrowseView() {
   if (state.currentView !== "guilds") {
     switchView("guilds");
   }
+}
+
+function getCurrentProfileMember() {
+  const linkedId = state.me?.user?.member_id || state.me?.user?.member;
+  if (!linkedId) return null;
+  return state.members.find((member) => String(member.id) === String(linkedId)) || null;
+}
+
+function getLikelyProfileMember() {
+  const username = String(state.me?.user?.username || "").trim();
+  if (!username) return null;
+  return state.members.find((member) => String(member.name || "").trim() === username) || null;
+}
+
+function openGuildFromProfile(member) {
+  if (!member) return;
+  state.selectedGuild = buildGuildKey(member);
+  state.guildDetailSearch = "";
+  state.guildDetailRoleFilter = "all";
+  state.guildDetailPage = 1;
+  switchView("guildDetail");
+}
+
+function handleProfileAction(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const actionTarget = target.closest("[data-action]");
+  if (actionTarget instanceof HTMLElement && actionTarget.dataset.action === "preview-screenshot") {
+    const memberId = actionTarget.dataset.id;
+    const member = state.members.find((item) => String(item.id) === String(memberId));
+    if (member) {
+      openScreenshotPreview(member);
+    }
+    return;
+  }
+  const profileActionTarget = target.closest("[data-profile-action]");
+  if (!(profileActionTarget instanceof HTMLElement)) return;
+  const action = profileActionTarget.dataset.profileAction;
+  if (!action) return;
+
+  if (action === "go-auth") {
+    window.location.href = "/auth.html";
+    return;
+  }
+
+  const member = getCurrentProfileMember() || getLikelyProfileMember();
+  if (action === "open-guild" && member) {
+    openGuildFromProfile(member);
+    return;
+  }
+  if (action === "open-cert" && member) {
+    openCertRequestModal(member.id);
+    return;
+  }
+  if (action === "upload-screenshot") {
+    triggerOwnScreenshotUpload();
+    return;
+  }
+  if (action === "delete-screenshot") {
+    deleteOwnScreenshot();
+    return;
+  }
+  if (action === "upload-avatar") {
+    triggerOwnAvatarUpload();
+    return;
+  }
+  if (action === "delete-avatar") {
+    deleteOwnAvatar();
+  }
+}
+
+async function handleProfileSubmit(event) {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || form.id !== "profileEditForm") return;
+  event.preventDefault();
+  const member = getCurrentProfileMember();
+  if (!member) {
+    toast("当前没有可编辑的成员资料");
+    return;
+  }
+  const formData = new FormData(form);
+  const payload = {
+    name: String(formData.get("name") || "").trim(),
+    role: String(formData.get("role") || "").trim(),
+    realm: String(formData.get("realm") || "").trim(),
+    power: String(formData.get("power") || "").trim(),
+    hp: String(formData.get("hp") || "").trim(),
+    attack: String(formData.get("attack") || "").trim(),
+    defense: String(formData.get("defense") || "").trim(),
+    speed: String(formData.get("speed") || "").trim(),
+    bonus_damage: String(formData.get("bonus_damage") || "").trim(),
+    damage_reduction: String(formData.get("damage_reduction") || "").trim(),
+    pet: String(formData.get("pet") || "").trim(),
+    note: String(formData.get("note") || "").trim(),
+  };
+  try {
+    await request("/api/profile/me", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    await refreshAll();
+    toast("个人资料已更新");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function triggerOwnScreenshotUpload() {
+  const member = getCurrentProfileMember();
+  if (!member || !els.memberScreenshotInput) {
+    toast("当前没有可上传截图的成员资料");
+    return;
+  }
+  state.pendingProfileUploadType = "screenshot";
+  state.pendingScreenshotMemberId = member.id;
+  els.memberScreenshotInput.value = "";
+  els.memberScreenshotInput.click();
+}
+
+function triggerOwnAvatarUpload() {
+  if (!els.profileAvatarInput) return;
+  state.pendingProfileUploadType = "avatar";
+  els.profileAvatarInput.value = "";
+  els.profileAvatarInput.click();
+}
+
+async function handleProfileAvatarSelected(event) {
+  const input = event.target;
+  const file = input.files?.[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append("avatar", file);
+  try {
+    await request("/api/profile/me/avatar", {
+      method: "POST",
+      body: formData,
+    });
+    await refreshAll();
+    toast("头像上传成功");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    input.value = "";
+    state.pendingProfileUploadType = "";
+  }
+}
+
+async function deleteOwnScreenshot() {
+  const member = getCurrentProfileMember();
+  if (!member?.screenshot_url) {
+    toast("当前还没有上传截图");
+    return;
+  }
+  try {
+    await request("/api/profile/me/screenshot", { method: "DELETE" });
+    await refreshAll();
+    toast("截图已删除");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function deleteOwnAvatar() {
+  if (!state.me?.user?.avatar_url) {
+    toast("当前还没有上传头像");
+    return;
+  }
+  try {
+    await request("/api/profile/me/avatar", { method: "DELETE" });
+    await refreshAll();
+    toast("头像已删除");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function renderProfilePage() {
+  if (!els.profilePage) return;
+
+  if (!state.me?.authenticated) {
+    els.profilePage.innerHTML = `
+      <article class="empty-card profile-empty-card">
+        <h3>还没有登录</h3>
+        <p>登录后可以在这里查看自己的成员资料、当前妖盟、战力、灵兽和认证状态。</p>
+        <button type="button" class="primary-btn profile-cta-btn" data-profile-action="go-auth">去登录</button>
+      </article>
+    `;
+    return;
+  }
+
+  const member = getCurrentProfileMember();
+  const likelyMember = getLikelyProfileMember();
+
+  if (state.me?.is_admin && !member) {
+    const hills = getDerivedHills();
+    const guildCount = hills.reduce((sum, hill) => sum + hill.guilds.length, 0);
+    els.profilePage.innerHTML = `
+      <section class="profile-shell">
+        <article class="profile-hero">
+          <div class="profile-hero__main">
+            <p class="panel-eyebrow">Admin Account</p>
+            <h3>${escapeHtml(state.me.user?.display_name || state.me.user?.username || "管理员")}</h3>
+            <p class="profile-hero__meta">账号：${escapeHtml(state.me.user?.username || "-")} · 身份：超级管理员</p>
+            <p class="profile-hero__desc">当前账号未绑定游戏成员，因此这里展示的是管理账号概览。</p>
+          </div>
+        </article>
+        <div class="profile-stat-grid">
+          <article class="profile-stat-card"><span>成员总数</span><strong>${formatNumber(state.members.length || 0)}</strong></article>
+          <article class="profile-stat-card"><span>妖盟数量</span><strong>${formatNumber(guildCount)}</strong></article>
+          <article class="profile-stat-card"><span>联盟数量</span><strong>${formatNumber(hills.length)}</strong></article>
+          <article class="profile-stat-card"><span>动态数量</span><strong>${formatNumber(state.announcements.length || 0)}</strong></article>
+        </div>
+      </section>
+    `;
+    return;
+  }
+
+  if (!member) {
+    const hintText = likelyMember
+      ? `检测到可能同名成员：${likelyMember.name}，你可以先进入该妖盟详情申请认证绑定。`
+      : "当前账号还没有绑定成员，可以到妖盟详情里申请认证后再回来查看。";
+    els.profilePage.innerHTML = `
+      <article class="empty-card profile-empty-card">
+        <h3>${escapeHtml(state.me.user?.display_name || state.me.user?.username || "当前用户")}</h3>
+        <p>${escapeHtml(hintText)}</p>
+        <div class="profile-empty-actions">
+          ${likelyMember ? `<button type="button" class="primary-btn profile-cta-btn" data-profile-action="open-guild">前往我的妖盟</button>` : ""}
+          ${likelyMember ? `<button type="button" class="ghost-btn" data-profile-action="open-cert">申请认证</button>` : ""}
+        </div>
+      </article>
+    `;
+    return;
+  }
+
+  const avatarUrl = state.me?.user?.avatar_url || "";
+  const avatarBlock = avatarUrl
+    ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(member.name)} 的头像" class="profile-avatar-image">`
+    : `<div class="profile-avatar-text">${escapeHtml(String(member.name || "我").slice(0, 2))}</div>`;
+  const screenshotBlock = member.screenshot_url
+    ? `
+      <button type="button" class="member-screenshot-card profile-screenshot-card" data-action="preview-screenshot" data-id="${member.id}">
+        <img src="${escapeHtml(member.screenshot_url)}" alt="${escapeHtml(member.name)} 的游戏截图">
+        <span>预览我的截图</span>
+      </button>
+    `
+    : `<div class="member-screenshot-placeholder profile-screenshot-placeholder">暂未上传截图</div>`;
+
+  els.profilePage.innerHTML = `
+    <section class="profile-shell">
+      <article class="profile-hero">
+        <div class="profile-hero__main">
+          <p class="panel-eyebrow">My Profile</p>
+          <h3>${escapeHtml(member.name || state.me.user?.username || "我的主页")}</h3>
+          <p class="profile-hero__meta">${escapeHtml(member.alliance || member.hill || "-")} · ${escapeHtml(getGuildDisplayName(member) || "-")} · 等级 ${escapeHtml(member.role || "-")}</p>
+          <p class="profile-hero__desc">${escapeHtml(member.note || "这里会展示你的成员简介、培养方向和当前定位。")}</p>
+          <div class="profile-chip-row">
+            <span class="profile-chip">境界 ${escapeHtml(member.realm || "-")}</span>
+            <span class="profile-chip">灵兽 ${escapeHtml(member.pet || "-")}</span>
+            <span class="profile-chip">认证 ${member.verified ? "已完成" : "待认证"}</span>
+          </div>
+        </div>
+        <div class="profile-hero__side">
+          <div class="profile-avatar">${avatarBlock}</div>
+          <div class="profile-account-card">
+            <span>账号</span>
+            <strong>${escapeHtml(state.me.user?.display_name || state.me.user?.username || "-")}</strong>
+            <small>${escapeHtml(currentUserRole())}</small>
+          </div>
+          <div class="profile-empty-actions">
+            <button type="button" class="ghost-btn" data-profile-action="upload-avatar">${avatarUrl ? "替换头像" : "上传头像"}</button>
+            ${avatarUrl ? `<button type="button" class="ghost-btn" data-profile-action="delete-avatar">删除头像</button>` : ""}
+          </div>
+        </div>
+      </article>
+
+      <form id="profileEditForm" class="profile-edit-grid">
+        <article class="profile-info-card profile-info-card--full profile-save-card">
+          <div class="profile-save-row">
+            <div>
+              <h4>保存修改</h4>
+              <p class="profile-save-hint">修改完资料后，直接点右侧这个按钮就会保存。</p>
+            </div>
+            <button type="submit" class="primary-btn profile-cta-btn">保存资料</button>
+          </div>
+        </article>
+
+        <article class="profile-info-card">
+          <h4>基础资料</h4>
+          <div class="profile-form-grid">
+            <label><span>联盟</span><input type="text" value="${escapeHtml(member.alliance || member.hill || "-")}" readonly></label>
+            <label><span>妖盟</span><input type="text" value="${escapeHtml(getGuildDisplayName(member) || "-")}" readonly></label>
+            <label><span>成员编号</span><input type="text" value="${escapeHtml(String(member.id || "-"))}" readonly></label>
+            <label><span>成员昵称</span><input name="name" type="text" value="${escapeHtml(member.name || "")}"></label>
+            <label><span>等级</span><input name="role" type="text" value="${escapeHtml(member.role || "")}"></label>
+            <label><span>境界</span><input name="realm" type="text" value="${escapeHtml(member.realm || "")}"></label>
+            <label><span>灵兽</span><input name="pet" type="text" value="${escapeHtml(member.pet || "")}"></label>
+            <label><span>认证状态</span><input type="text" value="${member.verified ? "已认证" : "未认证"}" readonly></label>
+          </div>
+        </article>
+
+        <article class="profile-info-card">
+          <h4>数值属性</h4>
+          <div class="profile-form-grid">
+            <label><span>战力</span><input name="power" type="text" value="${escapeHtml(formatNumber(member.power || 0))}"></label>
+            <label><span>气血</span><input name="hp" type="text" value="${escapeHtml(formatNumber(member.hp || 0))}"></label>
+            <label><span>攻击</span><input name="attack" type="text" value="${escapeHtml(formatNumber(member.attack || 0))}"></label>
+            <label><span>防御</span><input name="defense" type="text" value="${escapeHtml(formatNumber(member.defense || 0))}"></label>
+            <label><span>敏捷</span><input name="speed" type="text" value="${escapeHtml(formatNumber(member.speed || 0))}"></label>
+            <label><span>增伤</span><input name="bonus_damage" type="text" value="${escapeHtml(formatOptionalMetric(member.bonus_damage).replace(/-$/, ""))}"></label>
+            <label><span>减伤</span><input name="damage_reduction" type="text" value="${escapeHtml(formatOptionalMetric(member.damage_reduction).replace(/-$/, ""))}"></label>
+          </div>
+        </article>
+
+        <article class="profile-info-card profile-info-card--full">
+          <h4>个人介绍</h4>
+          <label class="profile-form-grid__full">
+            <span>备注</span>
+            <textarea name="note" rows="5" placeholder="写点你的定位、常用流派、培养方向或招人说明">${escapeHtml(member.note || "")}</textarea>
+          </label>
+          <div class="profile-empty-actions">
+            <button type="submit" class="primary-btn profile-cta-btn">保存资料</button>
+            <button type="button" class="ghost-btn" data-profile-action="open-guild">查看我的妖盟</button>
+            ${!member.verified ? `<button type="button" class="ghost-btn" data-profile-action="open-cert">认证记录</button>` : ""}
+          </div>
+        </article>
+      </form>
+
+      <div class="profile-detail-grid">
+        <article class="profile-media-card">
+          <h4>个人截图</h4>
+          ${screenshotBlock}
+          <div class="profile-empty-actions">
+            <button type="button" class="ghost-btn" data-profile-action="upload-screenshot">${member.screenshot_url ? "替换截图" : "上传截图"}</button>
+            ${member.screenshot_url ? `<button type="button" class="ghost-btn" data-profile-action="delete-screenshot">删除截图</button>` : ""}
+          </div>
+        </article>
+      </div>
+    </section>
+  `;
 }
 
 function renderGuildFilters() {

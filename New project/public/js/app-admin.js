@@ -290,17 +290,26 @@ async function handleMemberScreenshotSelected(event) {
   formData.append("screenshot", file);
 
   try {
-    await request(`/api/members/${memberId}/screenshot`, {
+    const uploadUrl = state.pendingProfileUploadType === "screenshot"
+      ? "/api/profile/me/screenshot"
+      : `/api/members/${memberId}/screenshot`;
+    await request(uploadUrl, {
       method: "POST",
       body: formData,
     });
     await refreshAll();
-    switchView("guildDetail");
-    toast("成员截图上传成功");
+    if (state.pendingProfileUploadType === "screenshot") {
+      switchView("profile");
+      toast("个人截图上传成功");
+    } else {
+      switchView("guildDetail");
+      toast("成员截图上传成功");
+    }
   } catch (error) {
     toast(error.message);
   } finally {
     input.value = "";
+    state.pendingProfileUploadType = "";
   }
 }
 

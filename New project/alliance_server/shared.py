@@ -48,27 +48,28 @@ class MultiPartFormDataParser:
             return
         
         # 添加 -- 前缀
-        boundary = '--' + boundary
+        boundary_bytes = ('--' + boundary).encode('utf-8')
         
         # 分割各部分
-        parts = self.body.split(boundary)
+        parts = self.body.split(boundary_bytes)
         
         for part in parts:
-            part = part.strip('\r\n')
-            if not part or part == '--':
+            part = part.strip(b'\r\n')
+            if not part or part == b'--':
                 continue
             
             # 分离 headers 和 content
-            if '\r\n\r\n' in part:
-                headers_section, content = part.split('\r\n\r\n', 1)
-            elif '\n\n' in part:
-                headers_section, content = part.split('\n\n', 1)
+            if b'\r\n\r\n' in part:
+                headers_section, content = part.split(b'\r\n\r\n', 1)
+            elif b'\n\n' in part:
+                headers_section, content = part.split(b'\n\n', 1)
             else:
                 continue
             
             # 解析 headers
             headers = {}
-            for line in headers_section.split('\r\n'):
+            for raw_line in headers_section.split(b'\r\n'):
+                line = raw_line.decode('utf-8', errors='replace')
                 if ':' in line:
                     key, value = line.split(':', 1)
                     headers[key.strip().lower()] = value.strip()
@@ -89,13 +90,13 @@ class MultiPartFormDataParser:
                 continue
             
             # 移除末尾的 \r\n
-            if content.endswith('\r\n'):
+            if content.endswith(b'\r\n'):
                 content = content[:-2]
             
             if filename:
                 self.form[field_name] = type('FileField', (), {
                     'filename': filename,
-                    'file': type('BytesIO', (), {'read': lambda self: content}),
+                    'file': io.BytesIO(content),
                     'value': content
                 })()
             else:
@@ -103,6 +104,12 @@ class MultiPartFormDataParser:
                     self.form[field_name] = content.decode('utf-8', errors='replace')
                 except:
                     self.form[field_name] = str(content)
+
+    def get(self, key, default=None):
+        return self.form.get(key, default)
+
+    def getvalue(self, key, default=None):
+        return self.form.get(key, default)
 
 
 def parse_form_data(handler):
@@ -151,6 +158,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PUBLIC_DIR = BASE_DIR / "public"
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = PUBLIC_DIR / "uploads" / "member-screenshots"
+AVATAR_UPLOADS_DIR = PUBLIC_DIR / "uploads" / "avatars"
 DB_PATH = DATA_DIR / "alliance.db"
 HOST = "127.0.0.1"
 PORT = 8878
@@ -165,6 +173,7 @@ ws_clients_lock = threading.Lock()
 auth_ws_clients = {}
 auth_ws_clients_lock = threading.Lock()
 admin_role_request_review_lock = threading.Lock()
+member_cert_request_review_lock = threading.Lock()
 WS_MAGIC_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # Thread pool for async database writes
@@ -189,14 +198,14 @@ def join_league_scopes(values):
     return LEAGUE_SCOPE_SEPARATOR.join(dict.fromkeys(split_league_scopes(LEAGUE_SCOPE_SEPARATOR.join(values or []))))
 
 
-def broadcast_auth_event_to_superadmins(payload):
+def broadcast_auth_event(payload, session_filter=None):
     message = json.dumps(payload, ensure_ascii=False)
     dead_clients = []
     with auth_ws_clients_lock:
         session_clients = list(auth_ws_clients.items())
     for session_token, clients in session_clients:
         session = user_sessions.get(session_token) or {}
-        if not (bool(session.get("is_admin")) or session.get("role") == ROLE_SUPERADMIN):
+        if session_filter and not session_filter(session):
             continue
         for client in list(clients):
             try:
@@ -213,6 +222,13 @@ def broadcast_auth_event_to_superadmins(payload):
             clients.discard(client)
             if not clients:
                 auth_ws_clients.pop(session_token, None)
+
+
+def broadcast_auth_event_to_superadmins(payload):
+    broadcast_auth_event(
+        payload,
+        lambda session: bool(session.get("is_admin")) or session.get("role") == ROLE_SUPERADMIN,
+    )
 
 
 class RichTextSanitizer(HTMLParser):
@@ -407,6 +423,7 @@ def member_name_exists(connection, guild_code, guild_prefix, guild_name, member_
 def initialize_database():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    AVATAR_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     with open_db() as connection:
         connection.executescript(
             """
@@ -476,12 +493,22 @@ def initialize_database():
                 member_id INTEGER NOT NULL,
                 alliance TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
+                review_comment TEXT NOT NULL DEFAULT '',
+                is_read INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
+                read_at TEXT,
                 reviewed_at TEXT,
                 reviewer_id INTEGER
             )
             """
         )
+        member_cert_request_columns = [row["name"] for row in connection.execute("PRAGMA table_info(member_cert_requests)").fetchall()]
+        if "review_comment" not in member_cert_request_columns:
+            connection.execute("ALTER TABLE member_cert_requests ADD COLUMN review_comment TEXT NOT NULL DEFAULT ''")
+        if "is_read" not in member_cert_request_columns:
+            connection.execute("ALTER TABLE member_cert_requests ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0")
+        if "read_at" not in member_cert_request_columns:
+            connection.execute("ALTER TABLE member_cert_requests ADD COLUMN read_at TEXT")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS admin_role_requests (

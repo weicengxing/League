@@ -16,6 +16,9 @@ class ApiRoutesMixin:
         if parsed.path == "/api/profile/me":
             self.send_json(self.get_current_user_profile())
             return
+        if parsed.path == "/api/profile/me/avatar":
+            self.send_json(self.get_current_user_avatar())
+            return
         if parsed.path == "/api/members":
             query = parse_qs(parsed.query)
             self.send_json(self.list_members(query))
@@ -36,7 +39,8 @@ class ApiRoutesMixin:
                 return
             query = parse_qs(parsed.query)
             member_id = query.get("member_id", [""])[0].strip() or None
-            self.send_json(self.list_member_cert_requests(current, member_id=member_id))
+            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            self.send_json(self.list_member_cert_requests(current, member_id=member_id, mark_read=mark_read))
             return
         if parsed.path == "/api/member-cert-requests/mine":
             current = get_current_auth(self)
@@ -93,6 +97,12 @@ class ApiRoutesMixin:
             if not user:
                 return
             self.upload_current_user_screenshot(user)
+            return
+        if parsed.path == "/api/profile/me/avatar":
+            user = self.require_permission("edit_own_profile", allow_admin_account=False)
+            if not user:
+                return
+            self.upload_current_user_avatar(user)
             return
         if parsed.path == "/api/login":
             AuthHandler(self).login()
@@ -242,6 +252,12 @@ class ApiRoutesMixin:
             if not user:
                 return
             self.delete_current_user_screenshot(user)
+            return
+        if parsed.path == "/api/profile/me/avatar":
+            user = self.require_permission("edit_own_profile", allow_admin_account=False)
+            if not user:
+                return
+            self.delete_current_user_avatar(user)
             return
         if parsed.path == "/api/profile/me/member-link":
             current = get_current_auth(self)

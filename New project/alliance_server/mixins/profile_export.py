@@ -358,6 +358,20 @@ class ProfileExportMixin:
             "auto_link_hint": "用户名与成员昵称完全一致时，系统会自动关联成员档案。",
         }
 
+    def get_current_user_avatar(self):
+        current = get_current_auth(self)
+        if not current.get("authenticated") or current.get("is_admin"):
+            return {
+                "authenticated": bool(current.get("authenticated")),
+                "avatar_url": "",
+                "is_admin": bool(current.get("is_admin")),
+            }
+        return {
+            "authenticated": True,
+            "avatar_url": current.get("user", {}).get("avatar_url", ""),
+            "is_admin": False,
+        }
+
     def fetch_member_for_user(self, user_id):
         with open_db() as connection:
             row = connection.execute(
@@ -381,8 +395,12 @@ class ProfileExportMixin:
 
         try:
             name = str(payload.get("name", member["name"])).strip() or member["name"]
+            role = str(payload.get("role", member["role"])).strip() or member["role"]
             realm = str(payload.get("realm", member["realm"])).strip() or member["realm"]
             power = parse_scaled_number(payload.get("power", member["power"]), "战力")
+            hp = parse_scaled_number(payload.get("hp", member["hp"]), "气血")
+            attack = parse_scaled_number(payload.get("attack", member["attack"]), "攻击")
+            defense = parse_scaled_number(payload.get("defense", member["defense"]), "防御")
             speed = parse_scaled_number(payload.get("speed", member["speed"]), "敏捷")
             bonus_damage = parse_scaled_number(payload.get("bonus_damage", member["bonus_damage"]), "增伤")
             damage_reduction = parse_scaled_number(payload.get("damage_reduction", member["damage_reduction"]), "减伤")
@@ -397,10 +415,10 @@ class ProfileExportMixin:
             connection.execute(
                 """
                 UPDATE members
-                SET name = ?, realm = ?, power = ?, speed = ?, bonus_damage = ?, damage_reduction = ?, pet = ?, note = ?, updated_at = ?
+                SET name = ?, role = ?, realm = ?, power = ?, hp = ?, attack = ?, defense = ?, speed = ?, bonus_damage = ?, damage_reduction = ?, pet = ?, note = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (name, realm, power, speed, bonus_damage, damage_reduction, pet, note, timestamp, member["id"]),
+                (name, role, realm, power, hp, attack, defense, speed, bonus_damage, damage_reduction, pet, note, timestamp, member["id"]),
             )
             connection.commit()
 
@@ -419,6 +437,67 @@ class ProfileExportMixin:
             self.send_json({"error": "当前账号还没有关联成员档案，暂时无法删除截图"}, status=HTTPStatus.BAD_REQUEST)
             return
         self.delete_member_screenshot(str(member["id"]))
+
+    def upload_current_user_avatar(self, user):
+        form = parse_form_data(self)
+        file_item = form.get("avatar") if hasattr(form, "get") else form.get("avatar") if isinstance(form, dict) else None
+        if file_item is None or getattr(file_item, "file", None) is None:
+            self.send_json({"error": "请先选择头像文件"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        raw = file_item.file.read()
+        if not raw:
+            self.send_json({"error": "头像文件不能为空"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        filename = getattr(file_item, "filename", "") or "avatar.png"
+        suffix = Path(filename).suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            self.send_json({"error": "头像仅支持 png/jpg/jpeg/webp/gif"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        with open_db() as connection:
+            row = connection.execute("SELECT avatar_path FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if row and row["avatar_path"]:
+            self.delete_current_user_avatar_file(row["avatar_path"])
+
+        version_token = datetime.now().strftime("%Y%m%d%H%M%S")
+        relative_path = f"/uploads/avatars/user-{user['id']}-{version_token}{suffix}"
+        target_path = PUBLIC_DIR / relative_path.lstrip("/")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(raw)
+
+        with open_db() as connection:
+            connection.execute("UPDATE users SET avatar_path = ? WHERE id = ?", (relative_path, user["id"]))
+            connection.commit()
+
+        update_user_sessions_for_user(user["id"], avatar_url=relative_path)
+        self.send_json({"message": "头像上传成功", "avatar_url": relative_path})
+
+    def delete_current_user_avatar(self, user):
+        with open_db() as connection:
+            row = connection.execute("SELECT avatar_path FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if not row or not row["avatar_path"]:
+            self.send_json({"error": "当前还没有上传头像"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self.delete_current_user_avatar_file(row["avatar_path"])
+        with open_db() as connection:
+            connection.execute("UPDATE users SET avatar_path = '' WHERE id = ?", (user["id"],))
+            connection.commit()
+        update_user_sessions_for_user(user["id"], avatar_url="")
+        self.send_json({"message": "头像已删除", "avatar_url": ""})
+
+    def delete_current_user_avatar_file(self, avatar_path):
+        if not avatar_path:
+            return
+        target = PUBLIC_DIR / str(avatar_path).lstrip("/")
+        try:
+            resolved = target.resolve()
+            avatars_root = AVATAR_UPLOADS_DIR.resolve()
+            if str(resolved).startswith(str(avatars_root)) and resolved.exists():
+                resolved.unlink()
+        except FileNotFoundError:
+            return
 
     def delete_by_id(self, table_name, record_id):
         if not record_id.isdigit():

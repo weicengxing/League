@@ -214,6 +214,7 @@ async function fetchMembers() {
   renderGuildSummary();
   renderRanking();
   renderAdminMembers();
+  renderProfilePage();
   renderGuildDetail();
 }
 
@@ -243,12 +244,19 @@ async function fetchMe() {
       state.roleRequests = [];
       state.roleRequestUnreadCount = 0;
     }
+    try {
+      await loadMemberCertRequests();
+    } catch {
+      state.memberRequests = [];
+      state.memberRequestUnreadCount = 0;
+    }
   } else {
     disconnectAuthWebSocket();
     state.myMemberRequests = [];
     state.memberRequests = [];
     state.roleRequests = [];
     state.roleRequestUnreadCount = 0;
+    state.memberRequestUnreadCount = 0;
   }
   renderAuth();
   renderFeeds();
@@ -262,6 +270,25 @@ async function loadMyMemberRequests() {
   } catch {
     state.myMemberRequests = [];
   }
+}
+
+function canReviewMemberRequests() {
+  return currentUserRole() === "SuperAdmin" || currentUserRole() === "AllianceAdmin";
+}
+
+async function loadMemberCertRequests(markRead = false, memberId = "") {
+  if (!canReviewMemberRequests()) {
+    state.memberRequests = [];
+    state.memberRequestUnreadCount = 0;
+    return;
+  }
+  const params = new URLSearchParams();
+  if (markRead) params.set("mark_read", "1");
+  if (memberId) params.set("member_id", String(memberId));
+  const query = params.toString();
+  const data = await request(`/api/member-cert-requests${query ? `?${query}` : ""}`);
+  state.memberRequests = data.items || [];
+  state.memberRequestUnreadCount = Number(data.unread_count || 0);
 }
 
 function getAllianceOptions() {
@@ -303,6 +330,44 @@ function canManageAlliance(allianceName) {
   const managedAlliance = String(state.me.user?.alliance || "").trim();
   const targetAlliance = String(allianceName || "").trim();
   return Boolean(managedAlliance) && managedAlliance === targetAlliance;
+}
+
+function getManagedLeagueScopes() {
+  return String(state.me?.user?.league || state.me?.user?.League || "")
+    .split("|")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function canReviewMemberCert(member) {
+  if (!member || !state.me?.authenticated || !hasPermission("manage_members")) {
+    return false;
+  }
+  if (currentUserRole() === "SuperAdmin") {
+    return true;
+  }
+  if (currentUserRole() !== "AllianceAdmin") {
+    return false;
+  }
+
+  const scopes = getManagedLeagueScopes();
+  if (!scopes.length) {
+    return canManageAlliance(member.alliance || member.hill || "");
+  }
+
+  const aliases = new Set(
+    [
+      buildGuildKey(member),
+      member.guild_code,
+      member.guild_prefix,
+      member.guild,
+      member.alliance,
+      member.hill,
+    ]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean),
+  );
+  return scopes.some((scope) => aliases.has(scope));
 }
 
 async function loadRoleRequests() {

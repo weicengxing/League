@@ -236,6 +236,7 @@ async function handleGuildDetailAction(event) {
     })
       .then(async () => {
         await loadMyMemberRequests();
+        renderAuth();
         renderGuildDetail();
         toast("认证申请已提交");
       })
@@ -246,7 +247,7 @@ async function handleGuildDetailAction(event) {
     const memberId = target.dataset.id;
     if (!memberId) return;
     const member = state.members.find((item) => String(item.id) === memberId);
-    if (!member || !canManageAlliance(member.alliance || member.hill || "")) return;
+    if (!member || !canReviewMemberCert(member)) return;
     openCertRequestModal(memberId);
     return;
   }

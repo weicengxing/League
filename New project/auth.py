@@ -30,7 +30,7 @@ ROLE_SUPERADMIN = "SuperAdmin"
 LEAGUE_SCOPE_SEPARATOR = "|"
 VALID_ROLES = {ROLE_GUEST, ROLE_VERIFIEDUSER, ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN}
 DEFAULT_ROLE_PERMISSIONS = {
-    ROLE_GUEST: {"view_public_content"},
+    ROLE_GUEST: {"view_public_content", "edit_own_profile", "upload_own_screenshot"},
     ROLE_VERIFIEDUSER: {"view_public_content", "create_posts", "edit_own_profile", "upload_own_screenshot"},
     ROLE_ALLIANCEADMIN: {
         "view_public_content",
@@ -182,6 +182,7 @@ def initialize_auth_database():
                 member_id INTEGER,
                 member INTEGER,
                 member_unbind_available_at TEXT,
+                avatar_path TEXT NOT NULL DEFAULT '',
                 role TEXT NOT NULL DEFAULT 'Guest',
                 alliance TEXT NOT NULL DEFAULT '',
                 league TEXT NOT NULL DEFAULT '',
@@ -215,6 +216,11 @@ def initialize_auth_database():
         if "member_unbind_available_at" not in columns:
             try:
                 connection.execute("ALTER TABLE users ADD COLUMN member_unbind_available_at TEXT")
+            except sqlite3.OperationalError:
+                pass
+        if "avatar_path" not in columns:
+            try:
+                connection.execute("ALTER TABLE users ADD COLUMN avatar_path TEXT NOT NULL DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
         if "role" not in columns:
@@ -323,12 +329,14 @@ def get_current_auth(handler):
     }
     if session.get("is_admin"):
         user["display_name"] = session.get("display_name", session["username"])
+        user["avatar_url"] = session.get("avatar_url", "")
         user["role"] = ROLE_SUPERADMIN
     else:
         user["email"] = session.get("email")
         user["member_id"] = session.get("member_id")
         user["member"] = session.get("member")
         user["member_unbind_available_at"] = session.get("member_unbind_available_at")
+        user["avatar_url"] = session.get("avatar_url", "")
         user["role"] = normalize_role(session.get("role"))
         user["alliance"] = session.get("alliance", "")
         user["league"] = normalize_league_scope(session.get("league", ""))
@@ -609,6 +617,7 @@ class AuthHandler:
                     "username": admin_row["username"],
                     "display_name": admin_row["display_name"],
                     "email": None,
+                    "avatar_url": "",
                     "role": ROLE_SUPERADMIN,
                     "is_admin": True,
                     "created_at": datetime.now().timestamp(),
@@ -629,6 +638,7 @@ class AuthHandler:
                             "id": admin_row["id"],
                             "username": admin_row["username"],
                             "display_name": admin_row["display_name"],
+                            "avatar_url": "",
                             "role": ROLE_SUPERADMIN,
                         }
                     }, ensure_ascii=False).encode("utf-8")
@@ -658,6 +668,7 @@ class AuthHandler:
                 "user_id": row["id"],
                 "username": row["username"],
                 "email": row["email"],
+                "avatar_url": row["avatar_path"] if "avatar_path" in row.keys() else "",
                 "member_id": member_id,
                 "member": member_id or row["member"],
                 "member_unbind_available_at": row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None,
@@ -683,6 +694,7 @@ class AuthHandler:
                             "id": row["id"],
                             "username": row["username"],
                             "email": row["email"],
+                            "avatar_url": row["avatar_path"] if "avatar_path" in row.keys() else "",
                             "member_id": member_id,
                             "member": member_id or row["member"],
                             "member_unbind_available_at": row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None,
@@ -860,6 +872,7 @@ class AuthHandler:
         
         if session.get("is_admin"):
             user_info["display_name"] = session.get("display_name", session["username"])
+            user_info["avatar_url"] = session.get("avatar_url", "")
             user_info["is_admin"] = True
             user_info["role"] = ROLE_SUPERADMIN
             return self.send_json({"valid": True, "type": "admin", "user": user_info})
@@ -869,6 +882,7 @@ class AuthHandler:
             user_info["member_id"] = session.get("member_id")
             user_info["member"] = session.get("member")
             user_info["member_unbind_available_at"] = session.get("member_unbind_available_at")
+            user_info["avatar_url"] = session.get("avatar_url", "")
             user_info["role"] = normalize_role(session.get("role"))
             user_info["alliance"] = session.get("alliance", "")
             return self.send_json({"valid": True, "type": "user", "user": user_info})
@@ -887,6 +901,7 @@ class AuthHandler:
             "member_id": session.get("member_id"),
             "member": session.get("member"),
             "member_unbind_available_at": session.get("member_unbind_available_at"),
+            "avatar_url": session.get("avatar_url", ""),
             "role": normalize_role(session.get("role")),
             "alliance": session.get("alliance", ""),
         }
@@ -956,6 +971,7 @@ def require_user(handler) -> dict | None:
         "email": session["email"],
         "member_id": session.get("member_id"),
         "member_unbind_available_at": session.get("member_unbind_available_at"),
+        "avatar_url": session.get("avatar_url", ""),
         "is_admin": False,
     }
 

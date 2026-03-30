@@ -131,6 +131,14 @@ function connectAuthWebSocket() {
         }
         if (data.type === "admin_role_request_reviewed") {
           handleAdminRoleRequestReviewed(data);
+          return;
+        }
+        if (data.type === "member_cert_request_created") {
+          handleMemberCertRequestCreated(data);
+          return;
+        }
+        if (data.type === "member_cert_request_reviewed") {
+          handleMemberCertRequestReviewed(data);
         }
       } catch (error) {
         console.error("[Auth WS] Parse error:", error);
@@ -191,6 +199,38 @@ async function handleAdminRoleRequestReviewed(data) {
   toast(`申请已被处理：${statusLabel}`);
 }
 
+async function handleMemberCertRequestCreated(data) {
+  if (!canReviewMemberRequests()) return;
+  try {
+    await loadMemberCertRequests();
+    renderAuth();
+    if (!els.certRequestModal?.classList.contains("hidden")) {
+      renderCertRequestList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh member cert requests:", error);
+  }
+  toast(`新的认证申请：${data?.username || "有用户"} 申请认领 ${data?.member_name || "成员"}`);
+}
+
+async function handleMemberCertRequestReviewed(data) {
+  try {
+    await loadMyMemberRequests();
+    if (canReviewMemberRequests()) {
+      await loadMemberCertRequests();
+    }
+    renderAuth();
+    renderGuildDetail();
+    if (!els.certRequestModal?.classList.contains("hidden")) {
+      renderCertRequestList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh reviewed member cert requests:", error);
+  }
+  const statusLabel = data?.status === "approved" ? "已通过" : "已拒绝";
+  toast(`认证申请已被处理：${statusLabel}`);
+}
+
 const state = {
   dashboard: null,
   members: [],
@@ -199,6 +239,7 @@ const state = {
   roleRequests: [],
   roleRequestUnreadCount: 0,
   memberRequests: [],
+  memberRequestUnreadCount: 0,
   myMemberRequests: [],
   selectedMemberCertId: null,
   currentView: "guilds",
@@ -220,6 +261,7 @@ const state = {
   rankingGuildFilter: "all",
   sort: "power-desc",
   pendingScreenshotMemberId: null,
+  pendingProfileUploadType: "",
 };
 
 const els = {
@@ -229,6 +271,7 @@ const els = {
   viewButtons: [...document.querySelectorAll(".top-pills__btn")],
   viewPanels: [...document.querySelectorAll(".board-panel")],
   guildSummary: document.querySelector("#guildSummary"),
+  profilePage: document.querySelector("#profilePage"),
   guildDetailBack: document.querySelector("#guildDetailBack"),
   guildDetailTitle: document.querySelector("#guildDetailTitle"),
   guildDetailMeta: document.querySelector("#guildDetailMeta"),
@@ -325,6 +368,7 @@ const els = {
   memberEditDamageReduction: document.querySelector("#memberEditDamageReduction"),
   memberEditNote: document.querySelector("#memberEditNote"),
   memberScreenshotInput: document.querySelector("#memberScreenshotInput"),
+  profileAvatarInput: document.querySelector("#profileAvatarInput"),
   screenshotPreviewModal: document.querySelector("#screenshotPreviewModal"),
   screenshotPreviewTitle: document.querySelector("#screenshotPreviewTitle"),
   screenshotPreviewImage: document.querySelector("#screenshotPreviewImage"),
@@ -373,7 +417,9 @@ function ensureRoleUi() {
       <button id="roleRequestBtn" type="button" class="ghost-btn action-btn--approve">
         申请列表<span id="roleRequestBadge" class="btn-badge hidden">0</span>
       </button>
-      <button id="certRequestBtn" type="button" class="ghost-btn action-btn--approve">认证申请</button>
+      <button id="certRequestBtn" type="button" class="ghost-btn action-btn--approve">
+        认证申请<span id="certRequestBadge" class="btn-badge hidden">0</span>
+      </button>
     `;
     document.querySelector(".board-top")?.appendChild(topActions);
   }
@@ -381,6 +427,10 @@ function ensureRoleUi() {
   const roleRequestBtn = document.querySelector("#roleRequestBtn");
   if (roleRequestBtn && !roleRequestBtn.querySelector("#roleRequestBadge")) {
     roleRequestBtn.insertAdjacentHTML("beforeend", `<span id="roleRequestBadge" class="btn-badge hidden">0</span>`);
+  }
+  const certRequestBtn = document.querySelector("#certRequestBtn");
+  if (certRequestBtn && !certRequestBtn.querySelector("#certRequestBadge")) {
+    certRequestBtn.insertAdjacentHTML("beforeend", `<span id="certRequestBadge" class="btn-badge hidden">0</span>`);
   }
 
   if (!document.querySelector("#roleApplyModal")) {
@@ -652,7 +702,10 @@ function bindEvents() {
   els.adminAnnouncementTable?.addEventListener("click", handleAdminAnnouncementAction);
   els.guildDetailList?.addEventListener("click", handleGuildDetailAction);
   els.guildDetailActions?.addEventListener("click", handleGuildDetailToolbarAction);
+  els.profilePage?.addEventListener("click", handleProfileAction);
+  els.profilePage?.addEventListener("submit", handleProfileSubmit);
   els.memberScreenshotInput?.addEventListener("change", handleMemberScreenshotSelected);
+  els.profileAvatarInput?.addEventListener("change", handleProfileAvatarSelected);
   els.melonList?.addEventListener("click", handleFeedListClick);
   els.announcementList?.addEventListener("click", handleFeedListClick);
   els.dangerConfirmSubmitBtn?.addEventListener("click", () => resolveDangerConfirm(true));

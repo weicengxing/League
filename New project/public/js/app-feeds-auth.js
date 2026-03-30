@@ -52,7 +52,7 @@ function renderMemberVerificationState(member) {
   if (member?.verified) {
     return `<span class="member-status member-status--verified">已认证</span>`;
   }
-  if (currentUserRole() === "AllianceAdmin" && canManageAlliance(member.alliance || member.hill || "")) {
+  if (canReviewMemberCert(member)) {
     return `<button type="button" class="action-btn action-btn--approve" data-action="open-member-cert" data-id="${member.id}">认证</button>`;
   }
   if (currentUserRole() === "Guest") {
@@ -72,13 +72,16 @@ async function openCertRequestModal(memberId = null) {
   if (!els.certRequestModal || !els.certRequestList) return;
   try {
     state.selectedMemberCertId = memberId ? String(memberId) : null;
-    const query = state.selectedMemberCertId ? `?member_id=${encodeURIComponent(state.selectedMemberCertId)}` : "";
-    const data = await request(`/api/member-cert-requests${query}`);
-    state.memberRequests = data.items || [];
+    if (canReviewMemberRequests()) {
+      await loadMemberCertRequests(true, state.selectedMemberCertId || "");
+    } else {
+      await loadMyMemberRequests();
+    }
   } catch (error) {
     toast(error.message);
     return;
   }
+  renderAuth();
   renderCertRequestList();
   els.certRequestModal.classList.remove("hidden");
 }
@@ -90,11 +93,17 @@ function closeCertRequestModal() {
 
 function renderCertRequestList() {
   if (!els.certRequestList) return;
+  const reviewMode = canReviewMemberRequests();
+  const modalTitle = els.certRequestModal?.querySelector(".modal__head h3");
+  if (modalTitle) {
+    modalTitle.textContent = reviewMode ? "成员认证申请" : "我的认证申请记录";
+  }
+  const sourceItems = reviewMode ? state.memberRequests : state.myMemberRequests;
   const items = state.selectedMemberCertId
-    ? state.memberRequests.filter((item) => String(item.member_id) === String(state.selectedMemberCertId))
-    : state.memberRequests;
+    ? sourceItems.filter((item) => String(item.member_id) === String(state.selectedMemberCertId))
+    : sourceItems;
   if (!items.length) {
-    els.certRequestList.innerHTML = `<article class="empty-card">暂无待审核申请。</article>`;
+    els.certRequestList.innerHTML = `<article class="empty-card">${reviewMode ? "暂无待审核申请。" : "暂无申请记录。"}</article>`;
     return;
   }
   els.certRequestList.innerHTML = items.map((item) => `
@@ -102,25 +111,35 @@ function renderCertRequestList() {
       <div class="request-item__body">
         <strong>${escapeHtml(item.display_name || item.username || "-")}</strong>
         <p>${escapeHtml(item.member_name || "-")} 路 ${escapeHtml(item.guild_name || "-")} 路 ${escapeHtml(item.alliance || "-")}</p>
-        <small>${escapeHtml(item.created_at || "")}</small>
+        ${reviewMode ? "" : `<p><span class="${escapeHtml(getRoleRequestStatusMeta(item.status).className)}">${escapeHtml(getRoleRequestStatusMeta(item.status).label)}</span></p>`}
+        <small>申请时间：${escapeHtml(item.created_at || "-")}</small>
+        ${item.reviewed_at ? `<small>处理时间：${escapeHtml(item.reviewed_at)}</small>` : ""}
+        ${item.review_comment ? `<p class="request-item__comment">审核备注：${escapeHtml(item.review_comment)}</p>` : ""}
       </div>
-      <div class="request-item__actions">
-        <button type="button" class="action-btn action-btn--approve" data-request-action="approve" data-id="${item.id}">同意</button>
-        <button type="button" class="action-btn action-btn--reject" data-request-action="reject" data-id="${item.id}">拒绝</button>
-      </div>
+      ${reviewMode ? `
+        <div class="request-item__actions">
+          <textarea class="request-comment-input" data-member-request-comment="${item.id}" rows="3" placeholder="审核备注（可填写拒绝原因）">${escapeHtml(item.review_comment || "")}</textarea>
+          <button type="button" class="action-btn action-btn--approve" data-request-action="approve" data-id="${item.id}">同意</button>
+          <button type="button" class="action-btn action-btn--reject" data-request-action="reject" data-id="${item.id}">拒绝</button>
+        </div>
+      ` : ""}
     </article>
   `).join("");
 }
 
 async function reviewMemberRequest(requestId, action) {
   if (!requestId || !action) return;
+  const commentInput = els.certRequestList?.querySelector(`[data-member-request-comment="${requestId}"]`);
+  const review_comment = commentInput instanceof HTMLTextAreaElement ? commentInput.value.trim() : "";
   try {
     await request(`/api/member-cert-requests/${requestId}`, {
       method: "POST",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, review_comment }),
     });
     await loadMyMemberRequests();
-    await openCertRequestModal(state.selectedMemberCertId);
+    await loadMemberCertRequests(false, state.selectedMemberCertId || "");
+    renderAuth();
+    renderCertRequestList();
     toast(action === "approve" ? "申请已通过" : "申请已拒绝");
   } catch (error) {
     toast(error.message);
@@ -306,14 +325,22 @@ function renderAuth() {
   els.loginForm?.classList.toggle("hidden", state.me.authenticated);
   els.roleApplyBtn?.classList.toggle("hidden", !(state.me.authenticated && currentUserRole() !== "AllianceAdmin" && currentUserRole() !== "SuperAdmin"));
   els.roleRequestBtn?.classList.toggle("hidden", !state.me.authenticated);
-  els.certRequestBtn?.classList.toggle("hidden", currentUserRole() !== "AllianceAdmin");
-  const badge = document.querySelector("#roleRequestBadge");
-  if (badge) {
+  els.certRequestBtn?.classList.toggle("hidden", !(state.me.authenticated && (currentUserRole() === "Guest" || canReviewMemberRequests())));
+  const roleBadge = document.querySelector("#roleRequestBadge");
+  if (roleBadge) {
     const count = canReviewRoleRequests()
       ? state.roleRequestUnreadCount
       : state.roleRequests.length;
-    badge.textContent = count;
-    badge.classList.toggle("hidden", count === 0);
+    roleBadge.textContent = count;
+    roleBadge.classList.toggle("hidden", count === 0);
+  }
+  const certBadge = document.querySelector("#certRequestBadge");
+  if (certBadge) {
+    const count = canReviewMemberRequests()
+      ? state.memberRequestUnreadCount
+      : state.myMemberRequests.length;
+    certBadge.textContent = count;
+    certBadge.classList.toggle("hidden", count === 0);
   }
   if (els.loginNavButton) {
     els.loginNavButton.textContent = state.me.authenticated ? "退出登录" : "登录";

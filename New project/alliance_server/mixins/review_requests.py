@@ -12,6 +12,7 @@ from auth import (
 class ReviewRequestsMixin:
     MEMBER_UNBIND_COOLDOWN_DAYS = 7
     ADMIN_ROLE_REQUEST_RETENTION_DAYS = 5
+    MEMBER_CERT_REQUEST_RETENTION_DAYS = 5
 
     def _parse_db_datetime(self, value):
         text = str(value or "").strip()
@@ -126,9 +127,15 @@ class ReviewRequestsMixin:
         if not target:
             return False
         aliases = self.get_scope_aliases(connection, target)
-        scopes = set(split_league_scopes(user.get("league", "")))
+        if hasattr(user, "keys"):
+            league_value = user["league"] if "league" in user.keys() else ""
+            alliance_value = user["alliance"] if "alliance" in user.keys() else ""
+        else:
+            league_value = user.get("league", "")
+            alliance_value = user.get("alliance", "")
+        scopes = set(split_league_scopes(league_value))
         if not scopes:
-            fallback_alliance = str(user.get("alliance") or "").strip()
+            fallback_alliance = str(alliance_value or "").strip()
             return bool(fallback_alliance) and fallback_alliance in aliases
         if scopes.intersection(aliases):
             return True
@@ -159,23 +166,59 @@ class ReviewRequestsMixin:
         )
         connection.commit()
 
-    def list_member_cert_requests(self, current, mine=False, member_id=None):
+    def cleanup_expired_member_cert_requests(self, connection):
+        cutoff = (datetime.now() - timedelta(days=self.MEMBER_CERT_REQUEST_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        connection.execute(
+            """
+            DELETE FROM member_cert_requests
+            WHERE created_at <= ?
+            """,
+            (cutoff,),
+        )
+        connection.commit()
+
+    def get_member_cert_scope_name(self, member_row):
+        if not member_row:
+            return ""
+        return str(member_row["guild"] or member_row["hill"] or member_row["alliance"] or "").strip()
+
+    def get_member_cert_reviewer_ids(self, connection, member_row):
+        reviewer_ids = set()
+        scope_name = self.get_member_cert_scope_name(member_row)
+        rows = connection.execute(
+            """
+            SELECT id, role, alliance, league
+            FROM users
+            WHERE role IN (?, ?)
+            """,
+            (ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN),
+        ).fetchall()
+        for row in rows:
+            if row["role"] == ROLE_SUPERADMIN:
+                reviewer_ids.add(int(row["id"]))
+                continue
+            if scope_name and self.scope_matches_user_league(connection, row, scope_name):
+                reviewer_ids.add(int(row["id"]))
+        return reviewer_ids
+
+    def list_member_cert_requests(self, current, mine=False, member_id=None, mark_read=False):
         user = current.get("user") or {}
         role = user.get("role") or ROLE_GUEST
+        is_reviewer = bool(current.get("is_admin")) or role in {ROLE_SUPERADMIN, ROLE_ALLIANCEADMIN}
         params = []
-        clauses = ["r.status = 'pending'"]
-        if mine:
+        if mine or not is_reviewer:
+            clauses = []
             clauses.append("r.user_id = ?")
             params.append(user.get("id"))
-        elif role != ROLE_SUPERADMIN:
-            clauses.append("r.user_id = ?")
-            params.append(user.get("id"))
+        else:
+            clauses = ["r.status = 'pending'"]
         if member_id:
             clauses.append("r.member_id = ?")
             params.append(int(member_id))
 
         where_sql = " AND ".join(clauses)
         with open_db() as connection:
+            self.cleanup_expired_member_cert_requests(connection)
             rows = connection.execute(
                 f"""
                 SELECT r.*, u.username, u.email, u.role AS user_role, u.alliance AS user_alliance,
@@ -188,12 +231,26 @@ class ReviewRequestsMixin:
                 """,
                 tuple(params),
             ).fetchall()
-            if role == ROLE_ALLIANCEADMIN and not mine:
+            if role == ROLE_ALLIANCEADMIN and is_reviewer and not mine:
                 rows = [
                     row
                     for row in rows
                     if self.scope_matches_user_league(connection, user, row["guild_name"] or row["alliance"])
                 ]
+            unread_ids = []
+            if is_reviewer and not mine:
+                unread_ids = [int(row["id"]) for row in rows if row["status"] == "pending" and int(row["is_read"] or 0) == 0]
+                if mark_read and unread_ids:
+                    placeholders = ",".join("?" for _ in unread_ids)
+                    connection.execute(
+                        f"""
+                        UPDATE member_cert_requests
+                        SET is_read = 1, read_at = ?
+                        WHERE id IN ({placeholders}) AND status = 'pending' AND is_read = 0
+                        """,
+                        (now_text(), *unread_ids),
+                    )
+                    connection.commit()
         return {
             "items": [
                 {
@@ -202,9 +259,12 @@ class ReviewRequestsMixin:
                     "member_id": row["member_id"],
                     "alliance": row["alliance"],
                     "status": row["status"],
+                    "is_read": int(row["is_read"] or 0),
                     "created_at": row["created_at"],
+                    "read_at": row["read_at"],
                     "reviewed_at": row["reviewed_at"],
                     "reviewer_id": row["reviewer_id"],
+                    "review_comment": row["review_comment"] or "",
                     "username": row["username"],
                     "email": row["email"],
                     "display_name": row["username"],
@@ -213,7 +273,8 @@ class ReviewRequestsMixin:
                     "member_verified": row["member_verified"],
                 }
                 for row in rows
-            ]
+            ],
+            "unread_count": 0 if mark_read or not (is_reviewer and not mine) else len(unread_ids),
         }
 
     def create_member_cert_request(self, current, payload):
@@ -328,6 +389,7 @@ class ReviewRequestsMixin:
 
     def review_member_cert_request(self, request_id, payload, current):
         action = str(payload.get("action", "")).strip().lower()
+        review_comment = str(payload.get("review_comment", payload.get("comment", ""))).strip()
         if action not in {"approve", "reject"}:
             self.send_json({"error": "鎿嶄綔鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
             return
@@ -335,77 +397,138 @@ class ReviewRequestsMixin:
             self.send_json({"error": "鍙傛暟鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
             return
         user = current.get("user") or {}
-        with open_db() as connection:
-            row = connection.execute(
-                """
-                SELECT r.*, u.username, u.role AS user_role, u.alliance AS user_alliance, m.verified AS member_verified
-                FROM member_cert_requests r
-                LEFT JOIN users u ON u.id = r.user_id
-                LEFT JOIN members m ON m.id = r.member_id
-                WHERE r.id = ?
-                """,
-                (request_id,),
-            ).fetchone()
-            if not row:
-                self.send_json({"error": "申请不存在"}, status=HTTPStatus.NOT_FOUND)
-                return
-            if current.get("user", {}).get("role") == ROLE_ALLIANCEADMIN:
+        reviewer_name = user.get("display_name") or user.get("username") or "管理员"
+        with member_cert_request_review_lock:
+            with open_db() as connection:
+                self.cleanup_expired_member_cert_requests(connection)
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT r.*, u.username, u.role AS user_role, u.alliance AS user_alliance, m.verified AS member_verified
+                    FROM member_cert_requests r
+                    LEFT JOIN users u ON u.id = r.user_id
+                    LEFT JOIN members m ON m.id = r.member_id
+                    WHERE r.id = ?
+                    """,
+                    (request_id,),
+                ).fetchone()
+                if not row:
+                    connection.rollback()
+                    self.send_json({"error": "申请不存在"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                if row["status"] != "pending":
+                    connection.rollback()
+                    status_label = "已通过" if row["status"] == "approved" else "已拒绝"
+                    self.send_json(
+                        {
+                            "error": f"该申请已处理过（{status_label}）",
+                            "status": row["status"],
+                            "reviewed_at": row["reviewed_at"],
+                            "reviewer_id": row["reviewer_id"],
+                            "review_comment": row["review_comment"] or "",
+                        },
+                        status=HTTPStatus.CONFLICT,
+                    )
+                    return
+                if current.get("user", {}).get("role") == ROLE_ALLIANCEADMIN:
+                    member_scope = connection.execute(
+                        "SELECT guild, hill, alliance FROM members WHERE id = ?",
+                        (row["member_id"],),
+                    ).fetchone()
+                    if not self.scope_matches_user_league(connection, user, self.get_member_cert_scope_name(member_scope)):
+                        connection.rollback()
+                        self.send_json({"error": "鍙兘瀹℃牳鑷繁绠＄悊鑼冨洿鍐呯殑璁よ瘉鐢宠"}, status=HTTPStatus.FORBIDDEN)
+                        return
+                timestamp = now_text()
+                if action == "approve":
+                    if int(row["member_verified"] or 0) == 1:
+                        connection.rollback()
+                        self.send_json({"error": "该成员已经认证"}, status=HTTPStatus.CONFLICT)
+                        return
+                    connection.execute(
+                        "UPDATE members SET verified = 1, updated_at = ? WHERE id = ?",
+                        (timestamp, row["member_id"]),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE users
+                        SET member_id = ?, member = ?, role = ?, alliance = ?, member_unbind_available_at = NULL
+                        WHERE id = ?
+                        """,
+                        (row["member_id"], row["member_id"], ROLE_VERIFIEDUSER, row["alliance"], row["user_id"]),
+                    )
+                    updated = connection.execute(
+                        """
+                        UPDATE member_cert_requests
+                        SET status = 'approved', reviewed_at = ?, reviewer_id = ?, review_comment = ?, is_read = 1, read_at = COALESCE(read_at, ?)
+                        WHERE id = ? AND status = 'pending'
+                        """,
+                        (timestamp, user.get("id"), review_comment, timestamp, request_id),
+                    )
+                    if updated.rowcount != 1:
+                        connection.rollback()
+                        self.send_json({"error": "该申请已处理过"}, status=HTTPStatus.CONFLICT)
+                        return
+                    connection.commit()
+                    update_user_sessions_for_user(
+                        row["user_id"],
+                        member_id=row["member_id"],
+                        member=row["member_id"],
+                        role=ROLE_VERIFIEDUSER,
+                        alliance=row["alliance"],
+                        member_unbind_available_at=None,
+                    )
+                    member_scope = connection.execute(
+                        "SELECT guild, hill, alliance FROM members WHERE id = ?",
+                        (row["member_id"],),
+                    ).fetchone()
+                    reviewer_ids = self.get_member_cert_reviewer_ids(connection, member_scope)
+                    broadcast_auth_event(
+                        {
+                            "type": "member_cert_request_reviewed",
+                            "request_id": int(request_id),
+                            "member_id": int(row["member_id"]),
+                            "status": "approved",
+                            "reviewed_by": reviewer_name,
+                            "review_comment": review_comment,
+                        },
+                        lambda session: bool(session.get("is_admin"))
+                        or int(session.get("user_id") or 0) in reviewer_ids
+                        or int(session.get("user_id") or 0) == int(row["user_id"] or 0),
+                    )
+                    self.send_json({"message": "璁よ瘉鐢宠宸查€氳繃"})
+                    return
+                updated = connection.execute(
+                    """
+                    UPDATE member_cert_requests
+                    SET status = 'rejected', reviewed_at = ?, reviewer_id = ?, review_comment = ?, is_read = 1, read_at = COALESCE(read_at, ?)
+                    WHERE id = ? AND status = 'pending'
+                    """,
+                    (timestamp, user.get("id"), review_comment, timestamp, request_id),
+                )
+                if updated.rowcount != 1:
+                    connection.rollback()
+                    self.send_json({"error": "该申请已处理过"}, status=HTTPStatus.CONFLICT)
+                    return
+                connection.commit()
                 member_scope = connection.execute(
                     "SELECT guild, hill, alliance FROM members WHERE id = ?",
                     (row["member_id"],),
                 ).fetchone()
-                scope_name = ""
-                if member_scope:
-                    scope_name = member_scope["guild"] or member_scope["hill"] or member_scope["alliance"]
-                if not self.scope_matches_user_league(connection, user, scope_name):
-                    self.send_json({"error": "鍙兘瀹℃牳鑷繁绠＄悊鑼冨洿鍐呯殑璁よ瘉鐢宠"}, status=HTTPStatus.FORBIDDEN)
-                    return
-            if action == "approve":
-                if int(row["member_verified"] or 0) == 1:
-                    self.send_json({"error": "该成员已经认证"}, status=HTTPStatus.CONFLICT)
-                    return
-                timestamp = now_text()
-                connection.execute(
-                    "UPDATE members SET verified = 1, updated_at = ? WHERE id = ?",
-                    (timestamp, row["member_id"]),
+                reviewer_ids = self.get_member_cert_reviewer_ids(connection, member_scope)
+                broadcast_auth_event(
+                    {
+                        "type": "member_cert_request_reviewed",
+                        "request_id": int(request_id),
+                        "member_id": int(row["member_id"]),
+                        "status": "rejected",
+                        "reviewed_by": reviewer_name,
+                        "review_comment": review_comment,
+                    },
+                    lambda session: bool(session.get("is_admin"))
+                    or int(session.get("user_id") or 0) in reviewer_ids
+                    or int(session.get("user_id") or 0) == int(row["user_id"] or 0),
                 )
-                connection.execute(
-                    """
-                    UPDATE users
-                    SET member_id = ?, member = ?, role = ?, alliance = ?, member_unbind_available_at = NULL
-                    WHERE id = ?
-                    """,
-                    (row["member_id"], row["member_id"], ROLE_VERIFIEDUSER, row["alliance"], row["user_id"]),
-                )
-                update_user_sessions_for_user(
-                    row["user_id"],
-                    member_id=row["member_id"],
-                    member=row["member_id"],
-                    role=ROLE_VERIFIEDUSER,
-                    alliance=row["alliance"],
-                    member_unbind_available_at=None,
-                )
-                connection.execute(
-                    """
-                    UPDATE member_cert_requests
-                    SET status = 'approved', reviewed_at = ?, reviewer_id = ?
-                    WHERE id = ?
-                    """,
-                    (timestamp, user.get("id"), request_id),
-                )
-                connection.commit()
-                self.send_json({"message": "璁よ瘉鐢宠宸查€氳繃"})
-                return
-            timestamp = now_text()
-            connection.execute(
-                """
-                UPDATE member_cert_requests
-                SET status = 'rejected', reviewed_at = ?, reviewer_id = ?
-                WHERE id = ?
-                """,
-                (timestamp, user.get("id"), request_id),
-            )
-            connection.commit()
         self.send_json({"message": "认证申请已拒绝"})
 
     def create_member_cert_request(self, current, payload):
@@ -419,6 +542,7 @@ class ReviewRequestsMixin:
             self.send_json({"error": cooldown_error}, status=HTTPStatus.FORBIDDEN)
             return
         with open_db() as connection:
+            self.cleanup_expired_member_cert_requests(connection)
             member = connection.execute("SELECT * FROM members WHERE id = ?", (member_id,)).fetchone()
             if not member:
                 self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
@@ -439,12 +563,26 @@ class ReviewRequestsMixin:
             timestamp = now_text()
             connection.execute(
                 """
-                INSERT INTO member_cert_requests (user_id, member_id, alliance, status, created_at)
-                VALUES (?, ?, ?, 'pending', ?)
+                INSERT INTO member_cert_requests (user_id, member_id, alliance, status, review_comment, is_read, created_at)
+                VALUES (?, ?, ?, 'pending', '', 0, ?)
                 """,
                 (user.get("id"), member_id, member["alliance"], timestamp),
             )
+            request_id = int(connection.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            reviewer_ids = self.get_member_cert_reviewer_ids(connection, member)
             connection.commit()
+        broadcast_auth_event(
+            {
+                "type": "member_cert_request_created",
+                "request_id": request_id,
+                "member_id": int(member_id),
+                "member_name": member["name"] or "",
+                "guild_name": member["guild"] or "",
+                "alliance": member["alliance"] or "",
+                "username": user.get("display_name") or user.get("username") or "",
+            },
+            lambda session: bool(session.get("is_admin")) or int(session.get("user_id") or 0) in reviewer_ids,
+        )
         self.send_json({"message": "认证申请已提交"}, status=HTTPStatus.CREATED)
 
     def unlink_current_user_member(self, current):
