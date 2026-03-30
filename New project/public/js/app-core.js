@@ -193,7 +193,6 @@ async function handleAdminRoleRequestCreated(data) {
 }
 
 async function handleAdminRoleRequestReviewed(data) {
-  if (!hasPermission("manage_roles")) return;
   try {
     await loadRoleRequests();
     renderAuth();
@@ -204,7 +203,7 @@ async function handleAdminRoleRequestReviewed(data) {
     console.error("[Auth WS] Failed to refresh reviewed role requests:", error);
   }
   const statusLabel = data?.status === "approved" ? "已通过" : "已拒绝";
-  toast(`申请已被处理：${statusLabel}`);
+  toast(hasPermission("manage_roles") ? `申请已被处理：${statusLabel}` : `你的盟主申请${statusLabel}`);
 }
 
 async function handleMemberCertRequestCreated(data) {
@@ -279,6 +278,7 @@ const state = {
   memberRequests: [],
   memberRequestUnreadCount: 0,
   myMemberRequests: [],
+  myMemberRequestUnreadCount: 0,
   identitySwapOptions: [],
   identitySwapRequests: [],
   identitySwapUnreadCount: 0,

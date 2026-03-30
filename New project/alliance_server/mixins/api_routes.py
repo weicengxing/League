@@ -56,7 +56,9 @@ class ApiRoutesMixin:
             if not current.get("authenticated"):
                 self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
                 return
-            self.send_json(self.list_member_cert_requests(current, mine=True))
+            query = parse_qs(parsed.query)
+            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            self.send_json(self.list_member_cert_requests(current, mine=True, mark_read=mark_read))
             return
         if parsed.path == "/api/admin-role-requests":
             current = get_current_auth(self)
