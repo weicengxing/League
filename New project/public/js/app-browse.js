@@ -12,6 +12,9 @@
 function switchView(view) {
   state.currentView = view;
   renderView();
+  if (view === "profile") {
+    void touchCurrentProfileMember();
+  }
 }
 
 function showBrowseView() {
@@ -86,6 +89,25 @@ function handleProfileAction(event) {
   }
   if (action === "delete-avatar") {
     deleteOwnAvatar();
+  }
+}
+
+async function touchCurrentProfileMember() {
+  const member = getCurrentProfileMember();
+  if (!member) return;
+  try {
+    const result = await request("/api/profile/me/touch", {
+      method: "POST",
+      body: "{}",
+    });
+    if (result?.item) {
+      state.members = state.members.map((item) => (String(item.id) === String(result.item.id) ? { ...item, ...result.item } : item));
+      if (state.currentView === "profile") {
+        renderProfilePage();
+      }
+    }
+  } catch (error) {
+    console.error("Failed to refresh profile updated_at:", error);
   }
 }
 

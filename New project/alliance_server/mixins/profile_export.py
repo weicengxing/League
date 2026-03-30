@@ -460,6 +460,22 @@ class ProfileExportMixin:
 
         self.send_json({"message": "个人信息更新成功", "item": self.fetch_member_for_user(user["id"])})
 
+    def touch_current_user_profile(self, user):
+        member = self.fetch_member_for_user(user["id"])
+        if not member:
+            self.send_json({"error": "当前账号还没有关联成员档案"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        timestamp = now_text()
+        with open_db() as connection:
+            connection.execute(
+                "UPDATE members SET updated_at = ? WHERE id = ?",
+                (timestamp, int(member["id"])),
+            )
+            connection.commit()
+
+        self.send_json({"message": "个人资料编辑时间已刷新", "item": self.fetch_member_for_user(user["id"])})
+
     def upload_current_user_screenshot(self, user):
         member = self.fetch_member_for_user(user["id"])
         if not member:

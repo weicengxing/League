@@ -139,15 +139,27 @@ function closeHillEditModal() {
   els.hillEditForm?.reset();
 }
 
-function openMemberEditModal(member, guildKey) {
+async function openMemberEditModal(member, guildKey) {
   if (!els.memberEditModal || !els.memberEditForm) return;
-  const sourceMember = member || state.members.find((item) => buildGuildKey(item) === guildKey);
+  let sourceMember = member || state.members.find((item) => buildGuildKey(item) === guildKey);
   const dashboardGuild = (state.dashboard?.guilds || []).find((guild) => {
     const key = guild.key || [guild.code || "", guild.prefix || "", guild.name || ""].join("|");
     return key === guildKey;
   });
   if (!sourceMember && !dashboardGuild) return;
   const isEdit = Boolean(member);
+  if (isEdit && sourceMember?.id) {
+    try {
+      const result = await request(`/api/members/${sourceMember.id}/touch`, { method: "POST", body: "{}" });
+      if (result?.item) {
+        sourceMember = result.item;
+        state.members = state.members.map((item) => (String(item.id) === String(sourceMember.id) ? { ...item, ...result.item } : item));
+      }
+    } catch (error) {
+      toast(error.message);
+      return;
+    }
+  }
   const guildDisplayName = sourceMember
     ? getGuildDisplayName(sourceMember)
     : (dashboardGuild?.display_name || dashboardGuild?.displayName || [dashboardGuild?.code || "", dashboardGuild?.prefix || "", dashboardGuild?.name || ""].filter(Boolean).join(" "));

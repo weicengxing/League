@@ -3,6 +3,23 @@ from alliance_server.shared import *
 from auth import get_current_auth
 
 class MemberGuildMixin:
+    def touch_member(self, member_id):
+        if not str(member_id).isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        timestamp = now_text()
+        with open_db() as connection:
+            connection.execute(
+                "UPDATE members SET updated_at = ? WHERE id = ?",
+                (timestamp, int(member_id)),
+            )
+            row = connection.execute("SELECT * FROM members WHERE id = ?", (int(member_id),)).fetchone()
+            connection.commit()
+        if not row:
+            self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+            return
+        self.send_json({"message": "成员编辑时间已刷新", "item": serialize_member(dict(row))})
+
     def build_dashboard(self):
         with open_db() as connection:
             members = [dict(row) for row in connection.execute("SELECT * FROM members").fetchall()]

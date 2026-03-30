@@ -118,6 +118,12 @@ class ApiRoutesMixin:
                 return
             self.upload_current_user_screenshot(user)
             return
+        if parsed.path == "/api/profile/me/touch":
+            user = self.require_permission("edit_own_profile", allow_admin_account=False)
+            if not user:
+                return
+            self.touch_current_user_profile(user)
+            return
         if parsed.path == "/api/profile/me/avatar":
             user = self.require_permission("edit_own_profile", allow_admin_account=False)
             if not user:
@@ -162,6 +168,17 @@ class ApiRoutesMixin:
             if not user:
                 return
             self.upload_member_screenshot(member_id)
+            return
+        if parsed.path.startswith("/api/members/") and parsed.path.endswith("/touch"):
+            member_id = parsed.path.strip("/").split("/")[2]
+            member = self.get_member_item(member_id)
+            if not member:
+                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            user = self.require_permission("manage_members", member.get("alliance", ""))
+            if not user:
+                return
+            self.touch_member(member_id)
             return
         if parsed.path == "/api/members/import":
             current = get_current_auth(self)
