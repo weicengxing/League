@@ -143,6 +143,7 @@ from auth import (
     read_session_token_from_handler,
     register_session_invalidation_notifier,
     update_user_sessions_for_user,
+    user_sessions,
 )
 
 
@@ -163,6 +164,7 @@ ws_clients = set()
 ws_clients_lock = threading.Lock()
 auth_ws_clients = {}
 auth_ws_clients_lock = threading.Lock()
+admin_role_request_review_lock = threading.Lock()
 WS_MAGIC_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # Thread pool for async database writes
@@ -185,6 +187,32 @@ def split_league_scopes(value):
 
 def join_league_scopes(values):
     return LEAGUE_SCOPE_SEPARATOR.join(dict.fromkeys(split_league_scopes(LEAGUE_SCOPE_SEPARATOR.join(values or []))))
+
+
+def broadcast_auth_event_to_superadmins(payload):
+    message = json.dumps(payload, ensure_ascii=False)
+    dead_clients = []
+    with auth_ws_clients_lock:
+        session_clients = list(auth_ws_clients.items())
+    for session_token, clients in session_clients:
+        session = user_sessions.get(session_token) or {}
+        if not (bool(session.get("is_admin")) or session.get("role") == ROLE_SUPERADMIN):
+            continue
+        for client in list(clients):
+            try:
+                client.send_text(message)
+            except Exception:
+                dead_clients.append((session_token, client))
+    if not dead_clients:
+        return
+    with auth_ws_clients_lock:
+        for session_token, client in dead_clients:
+            clients = auth_ws_clients.get(session_token)
+            if not clients:
+                continue
+            clients.discard(client)
+            if not clients:
+                auth_ws_clients.pop(session_token, None)
 
 
 class RichTextSanitizer(HTMLParser):
@@ -462,6 +490,7 @@ def initialize_database():
                 alliance TEXT NOT NULL,
                 request_type TEXT NOT NULL DEFAULT 'guild',
                 status TEXT NOT NULL DEFAULT 'pending',
+                review_comment TEXT NOT NULL DEFAULT '',
                 is_read INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 read_at TEXT,
@@ -477,6 +506,8 @@ def initialize_database():
             connection.execute("ALTER TABLE admin_role_requests ADD COLUMN read_at TEXT")
         if "request_type" not in admin_role_request_columns:
             connection.execute("ALTER TABLE admin_role_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'guild'")
+        if "review_comment" not in admin_role_request_columns:
+            connection.execute("ALTER TABLE admin_role_requests ADD COLUMN review_comment TEXT NOT NULL DEFAULT ''")
 
         admin_count = connection.execute("SELECT COUNT(*) AS count FROM admins").fetchone()["count"]
         if admin_count == 0:

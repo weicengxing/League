@@ -46,12 +46,14 @@ class ApiRoutesMixin:
             self.send_json(self.list_member_cert_requests(current, mine=True))
             return
         if parsed.path == "/api/admin-role-requests":
-            user = self.require_permission("manage_roles")
-            if not user:
+            current = get_current_auth(self)
+            if not current.get("authenticated"):
+                self.send_json({"error": "璇峰厛鐧诲綍"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             query = parse_qs(parsed.query)
             mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
-            self.send_json(self.list_admin_role_requests(mark_read=mark_read))
+            self.send_json(self.list_admin_role_requests(current, mark_read=mark_read))
+            return
         if parsed.path.startswith("/api/guilds/") and parsed.path.endswith("/members/export"):
             admin = self.require_admin()
             if not admin:
@@ -240,6 +242,13 @@ class ApiRoutesMixin:
             if not user:
                 return
             self.delete_current_user_screenshot(user)
+            return
+        if parsed.path == "/api/profile/me/member-link":
+            current = get_current_auth(self)
+            if not current.get("authenticated") or current.get("is_admin"):
+                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self.unlink_current_user_member(current)
             return
         if parsed.path.startswith("/api/members/") and parsed.path.endswith("/screenshot"):
             member_id = parsed.path.strip("/").split("/")[2]

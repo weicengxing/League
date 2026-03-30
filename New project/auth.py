@@ -167,7 +167,7 @@ def update_user_sessions_for_user(user_id, **updates):
     for session in user_sessions.values():
         if session.get("user_id") != user_id:
             continue
-        session.update({key: value for key, value in updates.items() if value is not None})
+        session.update(updates)
 
 
 def initialize_auth_database():
@@ -181,6 +181,7 @@ def initialize_auth_database():
                 email TEXT NOT NULL UNIQUE,
                 member_id INTEGER,
                 member INTEGER,
+                member_unbind_available_at TEXT,
                 role TEXT NOT NULL DEFAULT 'Guest',
                 alliance TEXT NOT NULL DEFAULT '',
                 league TEXT NOT NULL DEFAULT '',
@@ -211,6 +212,11 @@ def initialize_auth_database():
                 connection.execute("ALTER TABLE users ADD COLUMN member INTEGER")
             except sqlite3.OperationalError:
                 pass  # 列可能已存在
+        if "member_unbind_available_at" not in columns:
+            try:
+                connection.execute("ALTER TABLE users ADD COLUMN member_unbind_available_at TEXT")
+            except sqlite3.OperationalError:
+                pass
         if "role" not in columns:
             try:
                 connection.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'Guest'")
@@ -322,6 +328,7 @@ def get_current_auth(handler):
         user["email"] = session.get("email")
         user["member_id"] = session.get("member_id")
         user["member"] = session.get("member")
+        user["member_unbind_available_at"] = session.get("member_unbind_available_at")
         user["role"] = normalize_role(session.get("role"))
         user["alliance"] = session.get("alliance", "")
         user["league"] = normalize_league_scope(session.get("league", ""))
@@ -342,6 +349,13 @@ def ensure_member_binding(connection, user_row):
         member_id = user_row["member"]
     if member_id:
         return member_id
+    unbind_available_at = user_row["member_unbind_available_at"] if "member_unbind_available_at" in user_row.keys() else None
+    if unbind_available_at:
+        try:
+            if datetime.now() < datetime.strptime(unbind_available_at, "%Y-%m-%d %H:%M:%S"):
+                return None
+        except ValueError:
+            pass
 
     try:
         matches = connection.execute(
@@ -645,7 +659,8 @@ class AuthHandler:
                 "username": row["username"],
                 "email": row["email"],
                 "member_id": member_id,
-                "member": row["member"],
+                "member": member_id or row["member"],
+                "member_unbind_available_at": row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None,
                 "role": normalize_role(row["role"]),
                 "alliance": row["alliance"],
                 "league": normalize_league_scope(row["league"]),
@@ -669,7 +684,8 @@ class AuthHandler:
                             "username": row["username"],
                             "email": row["email"],
                             "member_id": member_id,
-                            "member": row["member"],
+                            "member": member_id or row["member"],
+                            "member_unbind_available_at": row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None,
                             "role": normalize_role(row["role"]),
                             "alliance": row["alliance"],
                             "league": normalize_league_scope(row["league"]),
@@ -852,6 +868,7 @@ class AuthHandler:
             user_info["is_admin"] = False
             user_info["member_id"] = session.get("member_id")
             user_info["member"] = session.get("member")
+            user_info["member_unbind_available_at"] = session.get("member_unbind_available_at")
             user_info["role"] = normalize_role(session.get("role"))
             user_info["alliance"] = session.get("alliance", "")
             return self.send_json({"valid": True, "type": "user", "user": user_info})
@@ -869,6 +886,7 @@ class AuthHandler:
             "email": session["email"],
             "member_id": session.get("member_id"),
             "member": session.get("member"),
+            "member_unbind_available_at": session.get("member_unbind_available_at"),
             "role": normalize_role(session.get("role")),
             "alliance": session.get("alliance", ""),
         }
@@ -937,6 +955,7 @@ def require_user(handler) -> dict | None:
         "username": session["username"],
         "email": session["email"],
         "member_id": session.get("member_id"),
+        "member_unbind_available_at": session.get("member_unbind_available_at"),
         "is_admin": False,
     }
 

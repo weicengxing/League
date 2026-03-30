@@ -250,6 +250,28 @@ async function handleGuildDetailAction(event) {
     openCertRequestModal(memberId);
     return;
   }
+  if (target.dataset.action === "unbind-member") {
+    const memberId = target.dataset.id;
+    if (!memberId) return;
+    const member = state.members.find((item) => String(item.id) === memberId);
+    if (!member || !isCurrentUserLinkedToMember(member)) return;
+    const isAllianceAdmin = currentUserRole() === "AllianceAdmin";
+    const confirmed = await openDangerConfirm({
+      title: "解绑成员身份",
+      message: isAllianceAdmin
+        ? `确定解绑 ${member.name} 的妖盟成员身份吗？解绑后会保留联盟管理员角色，不受 7 天冷却限制。`
+        : `确定解绑 ${member.name} 的妖盟成员身份吗？解绑后 7 天内不可再次认领。`,
+      confirmText: "确认解绑",
+    });
+    if (!confirmed) return;
+    request("/api/profile/me/member-link", { method: "DELETE" })
+      .then(async () => {
+        await refreshAll();
+        toast("成员身份已解绑");
+      })
+      .catch((error) => toast(error.message));
+    return;
+  }
   const memberId = target.dataset.id;
   if (!memberId) return;
   const member = state.members.find((item) => String(item.id) === memberId);

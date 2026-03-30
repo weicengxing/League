@@ -237,20 +237,18 @@ async function fetchMe() {
     state.sessionKickHandled = false;
     connectAuthWebSocket();
     await loadMyMemberRequests();
-    if (currentUserRole() === "SuperAdmin") {
-      try {
-        await loadRoleRequests();
-      } catch {
-        state.roleRequests = [];
-      }
-    } else {
+    try {
+      await loadRoleRequests();
+    } catch {
       state.roleRequests = [];
+      state.roleRequestUnreadCount = 0;
     }
   } else {
     disconnectAuthWebSocket();
     state.myMemberRequests = [];
     state.memberRequests = [];
     state.roleRequests = [];
+    state.roleRequestUnreadCount = 0;
   }
   renderAuth();
   renderFeeds();
@@ -310,6 +308,7 @@ function canManageAlliance(allianceName) {
 async function loadRoleRequests() {
   const data = await request("/api/admin-role-requests");
   state.roleRequests = data.items || [];
+  state.roleRequestUnreadCount = Number(data.unread_count || 0);
 }
 
 function renderDashboard() {

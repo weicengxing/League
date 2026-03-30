@@ -66,6 +66,8 @@ const DB_FIELD_LABELS = {
 function initDbAdmin() {
   document.querySelector("#dbAdminBtn")?.addEventListener("click", openDbAdminPanel);
   document.querySelector("#dbTableList")?.addEventListener("click", handleDbTableSelect);
+  document.querySelector("#dbScrollLeftBtn")?.addEventListener("click", () => scrollDbTable(-480));
+  document.querySelector("#dbScrollRightBtn")?.addEventListener("click", () => scrollDbTable(480));
   document.querySelector("#dbRefreshBtn")?.addEventListener("click", refreshDbTable);
   document.querySelector("#dbAddBtn")?.addEventListener("click", openDbAddModal);
   document.querySelector("#dbEditForm")?.addEventListener("submit", handleDbEditSubmit);
@@ -146,7 +148,7 @@ function renderDbTablePanel() {
   if (title) title.textContent = DB_TABLE_NAMES[dbState.currentTable] || dbState.currentTable;
   if (info) info.textContent = `共 ${dbState.totalCount} 条记录`;
 
-  const readOnly = ["admins", "users"].includes(dbState.currentTable);
+  const readOnly = ["admins"].includes(dbState.currentTable);
   head.innerHTML = `
     <tr>
       ${dbState.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}
@@ -181,8 +183,14 @@ function renderDbTablePanel() {
   `;
 }
 
+function scrollDbTable(offset) {
+  const tableWrap = document.querySelector("#dbTablePanel .table-wrap");
+  if (!(tableWrap instanceof HTMLElement)) return;
+  tableWrap.scrollBy({ left: offset, behavior: "smooth" });
+}
+
 function renderDbCell(column, value) {
-  if (column === "password_hash" && value) {
+  if (["password_hash", "salt", "verify_code"].includes(column) && value) {
     return `<td><span class="db-cell-truncate">${escapeHtml(String(value).slice(0, 20))}...</span></td>`;
   }
   if (value === null || value === undefined || value === "") {

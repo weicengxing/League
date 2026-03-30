@@ -150,6 +150,24 @@ button {
   flex-wrap: wrap;
 }
 
+.request-comment-input {
+  width: min(320px, 100%);
+  min-height: 88px;
+  padding: 10px 12px;
+  border: 1px solid rgba(126, 149, 101, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--text);
+  resize: vertical;
+}
+
+.request-item__comment {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(176, 106, 84, 0.08);
+  color: #7a4b3d;
+}
+
 .action-btn {
   min-height: 40px;
   padding: 0 14px;
@@ -190,6 +208,11 @@ button {
   color: #8b6630;
 }
 
+.member-status--rejected {
+  background: rgba(176, 106, 84, 0.14);
+  color: #9a4f3d;
+}
+
 .top-pills {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -227,6 +250,13 @@ button {
   grid-template-columns: 1fr;
   gap: 22px;
   align-items: start;
+}
+
+.board-layout > *,
+.main-board,
+.board-panel,
+.panel-card {
+  min-width: 0;
 }
 
 .side-filter {
@@ -395,6 +425,10 @@ button {
   align-items: center;
   gap: 16px;
   margin-bottom: 18px;
+}
+
+.panel-card__head > * {
+  min-width: 0;
 }
 
 .panel-eyebrow,
@@ -2221,6 +2255,7 @@ td {
 }
 
 .db-cell-truncate {
+  display: block;
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2267,4 +2302,61 @@ td {
 .pagination span {
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+/* 数据库管理表格 - 修复右侧属性超出屏幕问题 */
+#dbTablePanel {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+#dbTablePanel .panel-card__head,
+#dbTablePanel .pagination {
+  min-width: 0;
+}
+
+#dbTablePanel .table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+#dbTablePanel .data-table {
+  width: 1600px;
+  min-width: 1600px;
+}
+
+/* 数据库管理布局 - 确保水平滚动 */
+#dbAdminLayout {
+  min-width: 0;
+}
+
+#dbTablePanel th,
+#dbTablePanel td {
+  white-space: nowrap;
+}
+
+/* 数据库编辑模态框 - 确保字段列表水平滚动 */
+#dbEditModal .db-edit-fields {
+  overflow-x: auto;
+  display: grid;
+  gap: 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+#dbEditModal .db-edit-fields label {
+  min-width: max-content;
+}
+
+#dbEditModal .db-edit-fields input,
+#dbEditModal .db-edit-fields textarea,
+#dbEditModal .db-edit-fields select {
+  min-width: 200px;
+  max-width: 100%;
 }

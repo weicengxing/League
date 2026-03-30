@@ -123,6 +123,14 @@ function connectAuthWebSocket() {
         if (data.type === "session_kicked") {
           disconnectAuthWebSocket();
           handleSessionKicked();
+          return;
+        }
+        if (data.type === "admin_role_request_created") {
+          handleAdminRoleRequestCreated(data);
+          return;
+        }
+        if (data.type === "admin_role_request_reviewed") {
+          handleAdminRoleRequestReviewed(data);
         }
       } catch (error) {
         console.error("[Auth WS] Parse error:", error);
@@ -153,12 +161,43 @@ function disconnectAuthWebSocket() {
   }
 }
 
+async function handleAdminRoleRequestCreated(data) {
+  if (!hasPermission("manage_roles")) return;
+  try {
+    await loadRoleRequests();
+    renderAuth();
+    if (!els.roleRequestModal?.classList.contains("hidden")) {
+      renderRoleRequestList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh role requests:", error);
+  }
+  const label = data?.request_type === "alliance" ? "联盟盟主" : "妖盟盟主";
+  toast(`新的${label}申请：${data?.username || "有用户"}提交了申请`);
+}
+
+async function handleAdminRoleRequestReviewed(data) {
+  if (!hasPermission("manage_roles")) return;
+  try {
+    await loadRoleRequests();
+    renderAuth();
+    if (!els.roleRequestModal?.classList.contains("hidden")) {
+      renderRoleRequestList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh reviewed role requests:", error);
+  }
+  const statusLabel = data?.status === "approved" ? "已通过" : "已拒绝";
+  toast(`申请已被处理：${statusLabel}`);
+}
+
 const state = {
   dashboard: null,
   members: [],
   announcements: [],
   me: { authenticated: false, user: null, is_admin: false },
   roleRequests: [],
+  roleRequestUnreadCount: 0,
   memberRequests: [],
   myMemberRequests: [],
   selectedMemberCertId: null,
@@ -217,6 +256,8 @@ const els = {
   roleRequestList: document.querySelector("#roleRequestList"),
   roleApplyModal: document.querySelector("#roleApplyModal"),
   roleApplyForm: document.querySelector("#roleApplyForm"),
+  roleApplyType: document.querySelector("#roleApplyType"),
+  roleApplyTargetLabel: document.querySelector("#roleApplyTargetLabel"),
   roleApplyAlliance: document.querySelector("#roleApplyAlliance"),
   certRequestModal: document.querySelector("#certRequestModal"),
   certRequestList: document.querySelector("#certRequestList"),
@@ -353,7 +394,14 @@ function ensureRoleUi() {
           </div>
           <form id="roleApplyForm" class="stack-form modal-form">
             <label>
-              <span>目标联盟</span>
+              <span>申请类型</span>
+              <select id="roleApplyType">
+                <option value="guild">申请妖盟盟主</option>
+                <option value="alliance">申请联盟盟主</option>
+              </select>
+            </label>
+            <label>
+              <span id="roleApplyTargetLabel">目标妖盟</span>
               <select id="roleApplyAlliance"></select>
             </label>
             <div class="modal-actions">
@@ -393,6 +441,8 @@ function ensureRoleUi() {
   els.roleRequestModal = document.querySelector("#roleRequestModal");
   els.certRequestModal = document.querySelector("#certRequestModal");
   els.roleApplyForm = document.querySelector("#roleApplyForm");
+  els.roleApplyType = document.querySelector("#roleApplyType");
+  els.roleApplyTargetLabel = document.querySelector("#roleApplyTargetLabel");
   els.roleApplyAlliance = document.querySelector("#roleApplyAlliance");
   els.roleRequestList = document.querySelector("#roleRequestList");
   els.certRequestList = document.querySelector("#certRequestList");
@@ -587,6 +637,7 @@ function bindEvents() {
   });
   els.roleApplyBtn?.addEventListener("click", openRoleApplyModal);
   els.roleApplyForm?.addEventListener("submit", submitRoleApplyForm);
+  els.roleApplyType?.addEventListener("change", syncRoleApplyTargetOptions);
   els.roleRequestBtn?.addEventListener("click", openRoleRequestModal);
   els.certRequestBtn?.addEventListener("click", () => openCertRequestModal());
   els.exportGuildsBtn?.addEventListener("click", handleGuildExport);

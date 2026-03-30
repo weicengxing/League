@@ -31,7 +31,24 @@ function hasPendingMemberRequest(memberId) {
   return state.myMemberRequests.some((request) => String(request.member_id) === String(memberId) && request.status === "pending");
 }
 
+function getMemberClaimCooldownText() {
+  const availableAt = state.me?.user?.member_unbind_available_at;
+  if (!availableAt) return "";
+  const parsed = new Date(String(availableAt).replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) return "";
+  return `冷却中，${availableAt} 后可再次认领`;
+}
+
+function isCurrentUserLinkedToMember(member) {
+  if (!state.me?.authenticated || !member) return false;
+  const linkedId = state.me.user?.member_id || state.me.user?.member;
+  return Boolean(linkedId) && String(linkedId) === String(member.id);
+}
+
 function renderMemberVerificationState(member) {
+  if (isCurrentUserLinkedToMember(member)) {
+    return `<button type="button" class="action-btn action-btn--reject" data-action="unbind-member" data-id="${member.id}">解绑</button>`;
+  }
   if (member?.verified) {
     return `<span class="member-status member-status--verified">已认证</span>`;
   }
@@ -39,6 +56,10 @@ function renderMemberVerificationState(member) {
     return `<button type="button" class="action-btn action-btn--approve" data-action="open-member-cert" data-id="${member.id}">认证</button>`;
   }
   if (currentUserRole() === "Guest") {
+    const cooldownText = getMemberClaimCooldownText();
+    if (cooldownText) {
+      return `<span class="member-status member-status--pending">${escapeHtml(cooldownText)}</span>`;
+    }
     if (hasPendingMemberRequest(member.id)) {
       return `<span class="member-status member-status--pending">申请中</span>`;
     }
@@ -108,29 +129,72 @@ async function reviewMemberRequest(requestId, action) {
 
 function openRoleApplyModal() {
   if (!els.roleApplyModal || !els.roleApplyAlliance) return;
-  els.roleApplyAlliance.innerHTML = renderAllianceSelectOptions();
+  syncRoleApplyTargetOptions();
   els.roleApplyModal.classList.remove("hidden");
 }
 
 function closeRoleApplyModal() {
   els.roleApplyModal?.classList.add("hidden");
   els.roleApplyForm?.reset();
+  syncRoleApplyTargetOptions();
+}
+
+function getRoleApplyGuildOptions(selectedValue = "") {
+  const guilds = getDerivedHills()
+    .flatMap((hill) => hill.guilds.map((guild) => ({
+      key: String(guild.key || "").trim(),
+      label: String(guild.displayName || guild.name || guild.key || "").trim(),
+    })))
+    .filter((guild) => guild.key)
+    .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
+  return [
+    `<option value="">请选择妖盟</option>`,
+    ...guilds.map((guild) => `<option value="${escapeHtml(guild.key)}" ${guild.key === selectedValue ? "selected" : ""}>${escapeHtml(guild.label)}</option>`),
+  ].join("");
+}
+
+function renderRoleApplyTargetOptions(requestType, selectedValue = "") {
+  return requestType === "guild"
+    ? getRoleApplyGuildOptions(selectedValue)
+    : renderAllianceSelectOptions(selectedValue);
+}
+
+function getRoleRequestTargetLabel(item) {
+  const requestType = item?.request_type === "alliance" ? "alliance" : "guild";
+  const targetName = String(item?.target_name || item?.alliance || "").trim();
+  if (!targetName) return "-";
+  if (requestType === "alliance") return targetName;
+  return getGuildLabelFromKey(targetName, getDerivedHills()) || targetName;
+}
+
+function syncRoleApplyTargetOptions(selectedValue = "") {
+  if (!els.roleApplyAlliance) return;
+  const requestType = els.roleApplyType?.value === "alliance" ? "alliance" : "guild";
+  if (els.roleApplyTargetLabel) {
+    els.roleApplyTargetLabel.textContent = requestType === "guild" ? "目标妖盟" : "目标联盟";
+  }
+  els.roleApplyAlliance.innerHTML = renderRoleApplyTargetOptions(requestType, selectedValue);
 }
 
 async function submitRoleApplyForm(event) {
   event.preventDefault();
-  const alliance = els.roleApplyAlliance?.value || "";
-  if (!alliance) {
-    toast("请选择联盟");
+  const requestType = els.roleApplyType?.value === "alliance" ? "alliance" : "guild";
+  const targetName = els.roleApplyAlliance?.value || "";
+  if (!targetName) {
+    toast(requestType === "guild" ? "请选择妖盟" : "请选择联盟");
     return;
   }
   try {
     await request("/api/admin-role-requests", {
       method: "POST",
-      body: JSON.stringify({ alliance }),
+      body: JSON.stringify({
+        request_type: requestType,
+        target_name: targetName,
+        alliance: targetName,
+      }),
     });
     closeRoleApplyModal();
-    toast("联盟管理员申请已提交");
+    toast(requestType === "guild" ? "妖盟盟主申请已提交" : "联盟盟主申请已提交");
   } catch (error) {
     toast(error.message);
   }
@@ -152,10 +216,25 @@ function closeRoleRequestModal() {
   els.roleRequestModal?.classList.add("hidden");
 }
 
+function canReviewRoleRequests() {
+  return hasPermission("manage_roles");
+}
+
+function getRoleRequestStatusMeta(status) {
+  if (status === "approved") return { label: "已通过", className: "member-status member-status--verified" };
+  if (status === "rejected") return { label: "已拒绝", className: "member-status member-status--rejected" };
+  return { label: "审核中", className: "member-status member-status--pending" };
+}
+
 function renderRoleRequestList() {
   if (!els.roleRequestList) return;
+  const reviewMode = canReviewRoleRequests();
+  const modalTitle = els.roleRequestModal?.querySelector(".modal__head h3");
+  if (modalTitle) {
+    modalTitle.textContent = reviewMode ? "盟主权限申请列表" : "我的盟主申请记录";
+  }
   if (!state.roleRequests.length) {
-    els.roleRequestList.innerHTML = `<article class="empty-card">暂无联盟管理员申请。</article>`;
+    els.roleRequestList.innerHTML = `<article class="empty-card">${reviewMode ? "暂无待审核申请。" : "暂无申请记录。"}</article>`;
     return;
   }
   els.roleRequestList.innerHTML = state.roleRequests.map((item) => `
@@ -163,32 +242,60 @@ function renderRoleRequestList() {
       <div class="request-item__body">
         <strong>${escapeHtml(item.display_name || item.username || "-")}</strong>
         <p>${escapeHtml(item.email || "-")}</p>
-        <small>${escapeHtml(item.created_at || "")}</small>
+        <p>${escapeHtml(item.request_type === "guild" ? "妖盟盟主" : "联盟盟主")} · ${escapeHtml(getRoleRequestTargetLabel(item))}</p>
+        <p><span class="${escapeHtml(getRoleRequestStatusMeta(item.status).className)}">${escapeHtml(getRoleRequestStatusMeta(item.status).label)}</span></p>
+        <small>申请时间：${escapeHtml(item.created_at || "-")}</small>
+        ${item.reviewed_at ? `<small>处理时间：${escapeHtml(item.reviewed_at)}</small>` : ""}
+        ${item.review_comment ? `<p class="request-item__comment">审核备注：${escapeHtml(item.review_comment)}</p>` : ""}
       </div>
-      <div class="request-item__actions">
-        <select class="request-alliance-select" data-role-request-alliance="${item.id}">
-          ${renderAllianceSelectOptions(item.alliance || "")}
-        </select>
-        <button type="button" class="action-btn action-btn--approve" data-role-request-action="approve" data-id="${item.id}">同意</button>
-        <button type="button" class="action-btn action-btn--reject" data-role-request-action="reject" data-id="${item.id}">拒绝</button>
-      </div>
+      ${reviewMode ? `
+        <div class="request-item__actions">
+          <select class="request-alliance-select" data-role-request-alliance="${item.id}">
+            ${renderRoleApplyTargetOptions(item.request_type === "alliance" ? "alliance" : "guild", item.target_name || item.alliance || "")}
+          </select>
+          <textarea class="request-comment-input" data-role-request-comment="${item.id}" rows="3" placeholder="审核备注（可填写拒绝原因）">${escapeHtml(item.review_comment || "")}</textarea>
+          <button type="button" class="action-btn action-btn--approve" data-role-request-action="approve" data-id="${item.id}">同意</button>
+          <button type="button" class="action-btn action-btn--reject" data-role-request-action="reject" data-id="${item.id}">拒绝</button>
+        </div>
+      ` : ""}
     </article>
   `).join("");
 }
 
 async function reviewRoleRequest(requestId, action) {
   if (!requestId || !action) return;
+  const requestItem = state.roleRequests.find((item) => String(item.id) === String(requestId));
+  if (requestItem && requestItem.status && requestItem.status !== "pending") {
+    toast("该申请已处理过");
+    return;
+  }
   const allianceSelect = els.roleRequestList?.querySelector(`[data-role-request-alliance="${requestId}"]`);
-  const alliance = allianceSelect instanceof HTMLSelectElement ? allianceSelect.value : "";
+  const commentInput = els.roleRequestList?.querySelector(`[data-role-request-comment="${requestId}"]`);
+  const target_name = allianceSelect instanceof HTMLSelectElement ? allianceSelect.value : "";
+  const review_comment = commentInput instanceof HTMLTextAreaElement ? commentInput.value.trim() : "";
   try {
     await request(`/api/admin-role-requests/${requestId}`, {
       method: "POST",
-      body: JSON.stringify({ action, alliance }),
+      body: JSON.stringify({
+        action,
+        request_type: requestItem?.request_type || "guild",
+        target_name,
+        alliance: target_name,
+        review_comment,
+      }),
     });
     await loadRoleRequests();
     renderRoleRequestList();
     toast(action === "approve" ? "申请已通过" : "申请已拒绝");
   } catch (error) {
+    if (String(error.message || "").includes("已处理过")) {
+      try {
+        await loadRoleRequests();
+        renderRoleRequestList();
+      } catch (refreshError) {
+        console.error(refreshError);
+      }
+    }
     toast(error.message);
   }
 }
@@ -198,11 +305,13 @@ function renderAuth() {
   els.logoutBtn?.classList.toggle("hidden", !state.me.authenticated);
   els.loginForm?.classList.toggle("hidden", state.me.authenticated);
   els.roleApplyBtn?.classList.toggle("hidden", !(state.me.authenticated && currentUserRole() !== "AllianceAdmin" && currentUserRole() !== "SuperAdmin"));
-  els.roleRequestBtn?.classList.toggle("hidden", currentUserRole() !== "SuperAdmin");
+  els.roleRequestBtn?.classList.toggle("hidden", !state.me.authenticated);
   els.certRequestBtn?.classList.toggle("hidden", currentUserRole() !== "AllianceAdmin");
   const badge = document.querySelector("#roleRequestBadge");
   if (badge) {
-    const count = state.roleRequests.length;
+    const count = canReviewRoleRequests()
+      ? state.roleRequestUnreadCount
+      : state.roleRequests.length;
     badge.textContent = count;
     badge.classList.toggle("hidden", count === 0);
   }
