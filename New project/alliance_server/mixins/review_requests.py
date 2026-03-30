@@ -206,6 +206,7 @@ class ReviewRequestsMixin:
         role = user.get("role") or ROLE_GUEST
         is_reviewer = bool(current.get("is_admin")) or role in {ROLE_SUPERADMIN, ROLE_ALLIANCEADMIN}
         params = []
+        unread_ids = []
         if mine or not is_reviewer:
             clauses = []
             clauses.append("r.user_id = ?")
@@ -237,7 +238,6 @@ class ReviewRequestsMixin:
                     for row in rows
                     if self.scope_matches_user_league(connection, user, row["guild_name"] or row["alliance"])
                 ]
-            unread_ids = []
             if is_reviewer and not mine:
                 unread_ids = [int(row["id"]) for row in rows if row["status"] == "pending" and int(row["is_read"] or 0) == 0]
                 if mark_read and unread_ids:
@@ -247,6 +247,19 @@ class ReviewRequestsMixin:
                         UPDATE member_cert_requests
                         SET is_read = 1, read_at = ?
                         WHERE id IN ({placeholders}) AND status = 'pending' AND is_read = 0
+                        """,
+                        (now_text(), *unread_ids),
+                    )
+                    connection.commit()
+            else:
+                unread_ids = [int(row["id"]) for row in rows if row["status"] != "pending" and int(row["is_read"] or 0) == 0]
+                if mark_read and unread_ids:
+                    placeholders = ",".join("?" for _ in unread_ids)
+                    connection.execute(
+                        f"""
+                        UPDATE member_cert_requests
+                        SET is_read = 1, read_at = ?
+                        WHERE id IN ({placeholders}) AND status != 'pending' AND is_read = 0
                         """,
                         (now_text(), *unread_ids),
                     )
@@ -274,7 +287,7 @@ class ReviewRequestsMixin:
                 }
                 for row in rows
             ],
-            "unread_count": 0 if mark_read or not (is_reviewer and not mine) else len(unread_ids),
+            "unread_count": 0 if mark_read else len(unread_ids),
         }
 
     def create_member_cert_request(self, current, payload):
@@ -460,10 +473,10 @@ class ReviewRequestsMixin:
                     updated = connection.execute(
                         """
                         UPDATE member_cert_requests
-                        SET status = 'approved', reviewed_at = ?, reviewer_id = ?, review_comment = ?, is_read = 1, read_at = COALESCE(read_at, ?)
+                        SET status = 'approved', reviewed_at = ?, reviewer_id = ?, review_comment = ?, is_read = 0, read_at = NULL
                         WHERE id = ? AND status = 'pending'
                         """,
-                        (timestamp, user.get("id"), review_comment, timestamp, request_id),
+                        (timestamp, user.get("id"), review_comment, request_id),
                     )
                     if updated.rowcount != 1:
                         connection.rollback()
@@ -501,10 +514,10 @@ class ReviewRequestsMixin:
                 updated = connection.execute(
                     """
                     UPDATE member_cert_requests
-                    SET status = 'rejected', reviewed_at = ?, reviewer_id = ?, review_comment = ?, is_read = 1, read_at = COALESCE(read_at, ?)
+                    SET status = 'rejected', reviewed_at = ?, reviewer_id = ?, review_comment = ?, is_read = 0, read_at = NULL
                     WHERE id = ? AND status = 'pending'
                     """,
-                    (timestamp, user.get("id"), review_comment, timestamp, request_id),
+                    (timestamp, user.get("id"), review_comment, request_id),
                 )
                 if updated.rowcount != 1:
                     connection.rollback()
@@ -681,7 +694,24 @@ class ReviewRequestsMixin:
                     """
                 ).fetchall()
             else:
-                unread_count = 0
+                unread_count = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM admin_role_requests
+                    WHERE user_id = ? AND status != 'pending' AND is_read = 0
+                    """,
+                    (user.get("id"),),
+                ).fetchone()["count"]
+                if mark_read and unread_count:
+                    connection.execute(
+                        """
+                        UPDATE admin_role_requests
+                        SET is_read = 1, read_at = ?
+                        WHERE user_id = ? AND status != 'pending' AND is_read = 0
+                        """,
+                        (now_text(), user.get("id")),
+                    )
+                    connection.commit()
                 rows = connection.execute(
                     """
                     SELECT r.*, u.username, u.email, u.role AS current_role
@@ -951,7 +981,7 @@ class ReviewRequestsMixin:
                     updated = connection.execute(
                         """
                         UPDATE admin_role_requests
-                        SET status = 'approved', reviewed_at = ?, reviewer_id = ?, review_comment = ?
+                        SET status = 'approved', reviewed_at = ?, reviewer_id = ?, review_comment = ?, is_read = 0, read_at = NULL
                         WHERE id = ? AND status = 'pending'
                         """,
                         (timestamp, reviewer_id, review_comment, request_id),
@@ -968,13 +998,15 @@ class ReviewRequestsMixin:
                         league=league_value,
                         is_admin=False,
                     )
-                    broadcast_auth_event_to_superadmins(
+                    broadcast_auth_event(
                         {
                             "type": "admin_role_request_reviewed",
                             "request_id": int(request_id),
                             "status": "approved",
                             "reviewed_by": reviewer_name,
-                        }
+                        },
+                        lambda session: (bool(session.get("is_admin")) or session.get("role") == ROLE_SUPERADMIN)
+                        or int(session.get("user_id") or 0) == int(row["user_id"] or 0),
                     )
                     self.send_json({"message": "管理角色申请已通过"})
                     return
@@ -982,7 +1014,7 @@ class ReviewRequestsMixin:
                 updated = connection.execute(
                     """
                     UPDATE admin_role_requests
-                    SET status = 'rejected', reviewed_at = ?, reviewer_id = ?, review_comment = ?
+                    SET status = 'rejected', reviewed_at = ?, reviewer_id = ?, review_comment = ?, is_read = 0, read_at = NULL
                     WHERE id = ? AND status = 'pending'
                     """,
                     (timestamp, reviewer_id, review_comment, request_id),
@@ -993,12 +1025,14 @@ class ReviewRequestsMixin:
                     return
                 connection.commit()
 
-        broadcast_auth_event_to_superadmins(
+        broadcast_auth_event(
             {
                 "type": "admin_role_request_reviewed",
                 "request_id": int(request_id),
                 "status": "rejected",
                 "reviewed_by": reviewer_name,
-            }
+            },
+            lambda session: (bool(session.get("is_admin")) or session.get("role") == ROLE_SUPERADMIN)
+            or int(session.get("user_id") or 0) == int(row["user_id"] or 0),
         )
         self.send_json({"message": "管理角色申请已拒绝"})

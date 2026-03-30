@@ -253,6 +253,7 @@ async function fetchMe() {
   } else {
     disconnectAuthWebSocket();
     state.myMemberRequests = [];
+    state.myMemberRequestUnreadCount = 0;
     state.memberRequests = [];
     state.roleRequests = [];
     state.roleRequestUnreadCount = 0;
@@ -263,12 +264,17 @@ async function fetchMe() {
   renderAdminAnnouncements();
 }
 
-async function loadMyMemberRequests() {
+async function loadMyMemberRequests(markRead = false) {
   try {
-    const data = await request("/api/member-cert-requests/mine");
+    const params = new URLSearchParams();
+    if (markRead) params.set("mark_read", "1");
+    const query = params.toString();
+    const data = await request(`/api/member-cert-requests/mine${query ? `?${query}` : ""}`);
     state.myMemberRequests = data.items || [];
+    state.myMemberRequestUnreadCount = Number(data.unread_count || 0);
   } catch {
     state.myMemberRequests = [];
+    state.myMemberRequestUnreadCount = 0;
   }
 }
 
@@ -370,8 +376,11 @@ function canReviewMemberCert(member) {
   return scopes.some((scope) => aliases.has(scope));
 }
 
-async function loadRoleRequests() {
-  const data = await request("/api/admin-role-requests");
+async function loadRoleRequests(markRead = false) {
+  const params = new URLSearchParams();
+  if (markRead) params.set("mark_read", "1");
+  const query = params.toString();
+  const data = await request(`/api/admin-role-requests${query ? `?${query}` : ""}`);
   state.roleRequests = data.items || [];
   state.roleRequestUnreadCount = Number(data.unread_count || 0);
 }

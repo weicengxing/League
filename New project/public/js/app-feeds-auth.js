@@ -75,7 +75,7 @@ async function openCertRequestModal(memberId = null) {
     if (canReviewMemberRequests()) {
       await loadMemberCertRequests(true, state.selectedMemberCertId || "");
     } else {
-      await loadMyMemberRequests();
+      await loadMyMemberRequests(true);
     }
   } catch (error) {
     toast(error.message);
@@ -222,11 +222,12 @@ async function submitRoleApplyForm(event) {
 async function openRoleRequestModal() {
   if (!els.roleRequestModal || !els.roleRequestList) return;
   try {
-    await loadRoleRequests();
+    await loadRoleRequests(true);
   } catch (error) {
     toast(error.message);
     return;
   }
+  renderAuth();
   renderRoleRequestList();
   els.roleRequestModal.classList.remove("hidden");
 }
@@ -321,16 +322,21 @@ async function reviewRoleRequest(requestId, action) {
 
 function renderAuth() {
   const authenticated = state.me.authenticated && (hasPermission("admin_panel_access") || state.me.is_admin);
+  const currentRole = currentUserRole();
+  const hasPendingRoleRequest = state.roleRequests.some((item) => item.status === "pending");
+  const canShowRoleApply = state.me.authenticated && currentRole !== "AllianceAdmin" && currentRole !== "SuperAdmin";
   els.logoutBtn?.classList.toggle("hidden", !state.me.authenticated);
   els.loginForm?.classList.toggle("hidden", state.me.authenticated);
-  els.roleApplyBtn?.classList.toggle("hidden", !(state.me.authenticated && currentUserRole() !== "AllianceAdmin" && currentUserRole() !== "SuperAdmin"));
+  els.roleApplyBtn?.classList.toggle("hidden", !canShowRoleApply);
+  if (els.roleApplyBtn) {
+    els.roleApplyBtn.disabled = hasPendingRoleRequest;
+    els.roleApplyBtn.textContent = hasPendingRoleRequest ? "盟主申请审核中" : "申请盟主权限";
+  }
   els.roleRequestBtn?.classList.toggle("hidden", !state.me.authenticated);
-  els.certRequestBtn?.classList.toggle("hidden", !(state.me.authenticated && (currentUserRole() === "Guest" || canReviewMemberRequests())));
+  els.certRequestBtn?.classList.toggle("hidden", !(state.me.authenticated && (currentRole === "Guest" || canReviewMemberRequests())));
   const roleBadge = document.querySelector("#roleRequestBadge");
   if (roleBadge) {
-    const count = canReviewRoleRequests()
-      ? state.roleRequestUnreadCount
-      : state.roleRequests.length;
+    const count = state.roleRequestUnreadCount;
     roleBadge.textContent = count;
     roleBadge.classList.toggle("hidden", count === 0);
   }
@@ -338,7 +344,7 @@ function renderAuth() {
   if (certBadge) {
     const count = canReviewMemberRequests()
       ? state.memberRequestUnreadCount
-      : state.myMemberRequests.length;
+      : state.myMemberRequestUnreadCount;
     certBadge.textContent = count;
     certBadge.classList.toggle("hidden", count === 0);
   }
@@ -353,7 +359,7 @@ function renderAuth() {
   document.querySelector('[data-view="announcementAdmin"]')?.classList.toggle("hidden", !hasPermission("manage_announcements"));
     if (els.loginState) {
     if (state.me.authenticated && state.me.user) {
-      els.loginState.textContent = `当前用户：${state.me.user.display_name || state.me.user.username}（${currentUserRole()}）`;
+      els.loginState.textContent = `当前用户：${state.me.user.display_name || state.me.user.username}（${currentRole}）`;
     } else {
       els.loginState.textContent = "未登录";
     }
