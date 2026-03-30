@@ -45,12 +45,19 @@ function isCurrentUserLinkedToMember(member) {
   return Boolean(linkedId) && String(linkedId) === String(member.id);
 }
 
+function canBecomeMemberDirectly(member) {
+  return currentUserRole() === "AllianceAdmin" && canReviewMemberCert(member);
+}
+
 function renderMemberVerificationState(member) {
   if (isCurrentUserLinkedToMember(member)) {
     return `<button type="button" class="action-btn action-btn--reject" data-action="unbind-member" data-id="${member.id}">解绑</button>`;
   }
   if (member?.verified) {
     return `<span class="member-status member-status--verified">已认证</span>`;
+  }
+  if (canBecomeMemberDirectly(member)) {
+    return `<button type="button" class="action-btn action-btn--approve" data-action="become-member" data-id="${member.id}">成为</button>`;
   }
   if (canReviewMemberCert(member)) {
     return `<button type="button" class="action-btn action-btn--approve" data-action="open-member-cert" data-id="${member.id}">认证</button>`;
@@ -89,6 +96,223 @@ async function openCertRequestModal(memberId = null) {
 function closeCertRequestModal() {
   els.certRequestModal?.classList.add("hidden");
   state.selectedMemberCertId = null;
+}
+
+function closeIdentitySwapModal() {
+  els.identitySwapModal?.classList.add("hidden");
+  els.identitySwapForm?.reset();
+}
+
+function closeIdentitySwapRequestModal() {
+  els.identitySwapRequestModal?.classList.add("hidden");
+}
+
+function getIdentitySwapItems() {
+  if (state.identitySwapOptions?.length) {
+    return state.identitySwapOptions;
+  }
+  return state.members
+    .filter((member) => member?.verified)
+    .map((member) => ({
+      member_id: member.id,
+      alliance: member.alliance || member.hill || "",
+      guild: member.guild || "",
+      guild_display: getGuildDisplayName(member) || member.guild || "",
+      name: member.name || "",
+      verified: Boolean(member.verified),
+    }))
+    .filter((item) => String(item.member_id || "") !== String(state.me?.user?.member_id || state.me?.user?.member || ""));
+}
+
+function renderIdentitySwapAllianceOptions(selectedValue = "") {
+  const alliances = [...new Set(getIdentitySwapItems().map((item) => item.alliance).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "zh-CN"));
+  return [
+    `<option value="">请选择联盟</option>`,
+    ...alliances.map((alliance) => `<option value="${escapeHtml(alliance)}" ${alliance === selectedValue ? "selected" : ""}>${escapeHtml(alliance)}</option>`),
+  ].join("");
+}
+
+function renderIdentitySwapGuildOptions(allianceValue, selectedValue = "") {
+  const guilds = [...new Set(
+    getIdentitySwapItems()
+      .filter((item) => !allianceValue || item.alliance === allianceValue)
+      .map((item) => item.guild_display || item.guild)
+      .filter(Boolean),
+  )].sort((a, b) => a.localeCompare(b, "zh-CN"));
+  return [
+    `<option value="">请选择妖盟</option>`,
+    ...guilds.map((guild) => `<option value="${escapeHtml(guild)}" ${guild === selectedValue ? "selected" : ""}>${escapeHtml(guild)}</option>`),
+  ].join("");
+}
+
+function renderIdentitySwapMemberOptions(allianceValue, guildValue, selectedValue = "") {
+  const members = getIdentitySwapItems()
+    .filter((item) => (!allianceValue || item.alliance === allianceValue) && (!guildValue || (item.guild_display || item.guild) === guildValue))
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-CN"));
+  return [
+    `<option value="">请选择已认证成员</option>`,
+    ...members.map((item) => `<option value="${escapeHtml(String(item.member_id))}" ${String(item.member_id) === String(selectedValue) ? "selected" : ""}>${escapeHtml(item.name || `成员 #${item.member_id}`)}</option>`),
+  ].join("");
+}
+
+function syncIdentitySwapSummary() {
+  if (!els.identitySwapSummary) return;
+  const selectedId = els.identitySwapMember?.value || "";
+  const item = getIdentitySwapItems().find((entry) => String(entry.member_id) === String(selectedId));
+  if (!item) {
+    els.identitySwapSummary.textContent = "请选择目标身份。";
+    return;
+  }
+  els.identitySwapSummary.textContent = `将与 ${item.alliance || "-"} / ${item.guild_display || item.guild || "-"} / ${item.name || "-"} 绑定的账号交换 role、league、member、alliance 和冷却时间。`;
+}
+
+function syncIdentitySwapOptions(changedField = "alliance") {
+  if (!els.identitySwapAlliance || !els.identitySwapGuild || !els.identitySwapMember) return;
+  const selectedAlliance = els.identitySwapAlliance.value || "";
+  let selectedGuild = els.identitySwapGuild.value || "";
+  let selectedMember = els.identitySwapMember.value || "";
+
+  els.identitySwapGuild.innerHTML = renderIdentitySwapGuildOptions(selectedAlliance, selectedGuild);
+  if (![...els.identitySwapGuild.options].some((option) => option.value === selectedGuild)) {
+    const firstGuild = [...els.identitySwapGuild.options].find((option) => option.value);
+    selectedGuild = firstGuild?.value || "";
+    els.identitySwapGuild.value = selectedGuild;
+  }
+
+  if (changedField === "alliance") {
+    selectedMember = "";
+  }
+
+  els.identitySwapMember.innerHTML = renderIdentitySwapMemberOptions(selectedAlliance, selectedGuild, selectedMember);
+  if (![...els.identitySwapMember.options].some((option) => option.value === selectedMember)) {
+    const firstMember = [...els.identitySwapMember.options].find((option) => option.value);
+    els.identitySwapMember.value = firstMember?.value || "";
+  }
+  syncIdentitySwapSummary();
+}
+
+async function openIdentitySwapModal() {
+  if (!els.identitySwapModal || !els.identitySwapAlliance || !els.identitySwapGuild || !els.identitySwapMember) return;
+  const currentMemberId = state.me?.user?.member_id || state.me?.user?.member;
+  if (!currentMemberId) {
+    toast("你还没有认证，暂时不能交换身份");
+    return;
+  }
+  try {
+    const data = await request("/api/profile/me/identity-swap/options");
+    state.identitySwapOptions = data.items || [];
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  if (!state.identitySwapOptions.length) {
+    toast("当前没有可交换的已认证成员");
+    return;
+  }
+  els.identitySwapAlliance.innerHTML = renderIdentitySwapAllianceOptions();
+  const firstAlliance = [...els.identitySwapAlliance.options].find((option) => option.value);
+  els.identitySwapAlliance.value = firstAlliance?.value || "";
+  if (els.identitySwapMessage) {
+    els.identitySwapMessage.value = "";
+  }
+  syncIdentitySwapOptions("alliance");
+  els.identitySwapModal.classList.remove("hidden");
+}
+
+async function submitIdentitySwapForm(event) {
+  event.preventDefault();
+  const memberId = els.identitySwapMember?.value || "";
+  const message = els.identitySwapMessage?.value.trim() || "";
+  if (!memberId) {
+    toast("请选择目标成员");
+    return;
+  }
+  try {
+    const result = await request("/api/identity-swap-requests", {
+      method: "POST",
+      body: JSON.stringify({ member_id: Number(memberId), message }),
+    });
+    closeIdentitySwapModal();
+    await loadIdentitySwapRequests();
+    renderAuth();
+    toast(result.message || "身份交换申请已提交");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function openIdentitySwapRequestModal() {
+  if (!els.identitySwapRequestModal || !els.identitySwapRequestList) return;
+  try {
+    await loadIdentitySwapRequests(true);
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  renderAuth();
+  renderIdentitySwapRequestList();
+  els.identitySwapRequestModal.classList.remove("hidden");
+}
+
+function getIdentitySwapRequestStatusMeta(status) {
+  if (status === "approved") return { label: "已同意", className: "member-status member-status--verified" };
+  if (status === "rejected") return { label: "已拒绝", className: "member-status member-status--rejected" };
+  return { label: "待确认", className: "member-status member-status--pending" };
+}
+
+function renderIdentitySwapRequestList() {
+  if (!els.identitySwapRequestList) return;
+  const items = state.identitySwapRequests || [];
+  if (!items.length) {
+    els.identitySwapRequestList.innerHTML = `<article class="empty-card">暂无身份交换申请记录。</article>`;
+    return;
+  }
+  els.identitySwapRequestList.innerHTML = items.map((item) => {
+    const statusMeta = getIdentitySwapRequestStatusMeta(item.status);
+    const directionText = item.is_outgoing ? "我发起的申请" : "发给我的申请";
+    const fromLabel = `${item.requester_member_name || "-"} / ${item.requester_guild || "-"} / ${item.requester_alliance || "-"}`;
+    const toLabel = `${item.target_member_name || "-"} / ${item.target_guild || "-"} / ${item.target_alliance || "-"}`;
+    return `
+      <article class="request-item">
+        <div class="request-item__body">
+          <strong>${escapeHtml(directionText)}</strong>
+          <p>发起身份：${escapeHtml(fromLabel)}</p>
+          <p>目标身份：${escapeHtml(toLabel)}</p>
+          <p><span class="${escapeHtml(statusMeta.className)}">${escapeHtml(statusMeta.label)}</span></p>
+          <small>申请时间：${escapeHtml(item.created_at || "-")}</small>
+          ${item.reviewed_at ? `<small>处理时间：${escapeHtml(item.reviewed_at)}</small>` : ""}
+          ${item.message ? `<p class="request-item__comment">交换留言：${escapeHtml(item.message)}</p>` : ""}
+          ${item.review_comment ? `<p class="request-item__comment">回复留言：${escapeHtml(item.review_comment)}</p>` : ""}
+        </div>
+        ${item.can_review ? `
+          <div class="request-item__actions">
+            <textarea class="request-comment-input" data-identity-swap-comment="${item.id}" rows="3" placeholder="回复留言（可填写同意说明或拒绝原因）">${escapeHtml(item.review_comment || "")}</textarea>
+            <button type="button" class="action-btn action-btn--approve" data-identity-swap-action="approve" data-id="${item.id}">同意</button>
+            <button type="button" class="action-btn action-btn--reject" data-identity-swap-action="reject" data-id="${item.id}">拒绝</button>
+          </div>
+        ` : ""}
+      </article>
+    `;
+  }).join("");
+}
+
+async function reviewIdentitySwapRequest(requestId, action) {
+  if (!requestId || !action) return;
+  const commentInput = els.identitySwapRequestList?.querySelector(`[data-identity-swap-comment="${requestId}"]`);
+  const review_comment = commentInput instanceof HTMLTextAreaElement ? commentInput.value.trim() : "";
+  try {
+    const result = await request(`/api/identity-swap-requests/${requestId}`, {
+      method: "POST",
+      body: JSON.stringify({ action, review_comment }),
+    });
+    await Promise.all([fetchMe(), loadIdentitySwapRequests()]);
+    renderAuth();
+    renderIdentitySwapRequestList();
+    toast(result.message || (action === "approve" ? "身份交换已完成" : "身份交换申请已拒绝"));
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 function renderCertRequestList() {
@@ -326,6 +550,8 @@ function renderAuth() {
   els.roleApplyBtn?.classList.toggle("hidden", !(state.me.authenticated && currentUserRole() !== "AllianceAdmin" && currentUserRole() !== "SuperAdmin"));
   els.roleRequestBtn?.classList.toggle("hidden", !state.me.authenticated);
   els.certRequestBtn?.classList.toggle("hidden", !(state.me.authenticated && (currentUserRole() === "Guest" || canReviewMemberRequests())));
+  els.identitySwapBtn?.classList.toggle("hidden", !(state.me.authenticated && !state.me.is_admin));
+  els.identitySwapRequestBtn?.classList.toggle("hidden", !(state.me.authenticated && !state.me.is_admin));
   const roleBadge = document.querySelector("#roleRequestBadge");
   if (roleBadge) {
     const count = canReviewRoleRequests()
@@ -341,6 +567,12 @@ function renderAuth() {
       : state.myMemberRequests.length;
     certBadge.textContent = count;
     certBadge.classList.toggle("hidden", count === 0);
+  }
+  const identitySwapBadge = document.querySelector("#identitySwapRequestBadge");
+  if (identitySwapBadge) {
+    const count = Number(state.identitySwapUnreadCount || 0);
+    identitySwapBadge.textContent = count;
+    identitySwapBadge.classList.toggle("hidden", count === 0);
   }
   if (els.loginNavButton) {
     els.loginNavButton.textContent = state.me.authenticated ? "退出登录" : "登录";

@@ -250,13 +250,22 @@ async function fetchMe() {
       state.memberRequests = [];
       state.memberRequestUnreadCount = 0;
     }
+    try {
+      await loadIdentitySwapRequests();
+    } catch {
+      state.identitySwapRequests = [];
+      state.identitySwapUnreadCount = 0;
+    }
   } else {
     disconnectAuthWebSocket();
     state.myMemberRequests = [];
     state.memberRequests = [];
     state.roleRequests = [];
+    state.identitySwapOptions = [];
+    state.identitySwapRequests = [];
     state.roleRequestUnreadCount = 0;
     state.memberRequestUnreadCount = 0;
+    state.identitySwapUnreadCount = 0;
   }
   renderAuth();
   renderFeeds();
@@ -374,6 +383,20 @@ async function loadRoleRequests() {
   const data = await request("/api/admin-role-requests");
   state.roleRequests = data.items || [];
   state.roleRequestUnreadCount = Number(data.unread_count || 0);
+}
+
+async function loadIdentitySwapRequests(markRead = false) {
+  if (!state.me?.authenticated || state.me?.is_admin) {
+    state.identitySwapRequests = [];
+    state.identitySwapUnreadCount = 0;
+    return;
+  }
+  const params = new URLSearchParams();
+  if (markRead) params.set("mark_read", "1");
+  const query = params.toString();
+  const data = await request(`/api/identity-swap-requests${query ? `?${query}` : ""}`);
+  state.identitySwapRequests = data.items || [];
+  state.identitySwapUnreadCount = Number(data.unread_count || 0);
 }
 
 function renderDashboard() {

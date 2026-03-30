@@ -6,6 +6,8 @@ from auth import (
     ROLE_GUEST,
     ROLE_SUPERADMIN,
     ROLE_VERIFIEDUSER,
+    normalize_league_scope,
+    normalize_role,
     update_user_sessions_for_user,
 )
 
@@ -13,6 +15,7 @@ class ReviewRequestsMixin:
     MEMBER_UNBIND_COOLDOWN_DAYS = 7
     ADMIN_ROLE_REQUEST_RETENTION_DAYS = 5
     MEMBER_CERT_REQUEST_RETENTION_DAYS = 5
+    IDENTITY_SWAP_REQUEST_RETENTION_DAYS = 7
 
     def _parse_db_datetime(self, value):
         text = str(value or "").strip()
@@ -176,6 +179,75 @@ class ReviewRequestsMixin:
             (cutoff,),
         )
         connection.commit()
+
+    def cleanup_expired_identity_swap_requests(self, connection):
+        cutoff = (datetime.now() - timedelta(days=self.IDENTITY_SWAP_REQUEST_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        connection.execute(
+            """
+            DELETE FROM identity_swap_requests
+            WHERE created_at <= ?
+            """,
+            (cutoff,),
+        )
+        connection.commit()
+
+    def _build_identity_swap_identity(self, row):
+        return {
+            "role": normalize_role(row["role"]),
+            "league": normalize_league_scope(row["league"]),
+            "member_id": row["member_id"],
+            "member": row["member"],
+            "alliance": str(row["alliance"] or "").strip(),
+            "member_unbind_available_at": row["member_unbind_available_at"],
+        }
+
+    def execute_identity_swap(self, connection, user_a_row, user_b_row):
+        identity_a = self._build_identity_swap_identity(user_a_row)
+        identity_b = self._build_identity_swap_identity(user_b_row)
+
+        connection.execute(
+            """
+            UPDATE users
+            SET role = ?,
+                league = ?,
+                member_id = ?,
+                member = ?,
+                alliance = ?,
+                member_unbind_available_at = ?
+            WHERE id = ?
+            """,
+            (
+                identity_b["role"],
+                identity_b["league"],
+                identity_b["member_id"],
+                identity_b["member"],
+                identity_b["alliance"],
+                identity_b["member_unbind_available_at"],
+                int(user_a_row["id"]),
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE users
+            SET role = ?,
+                league = ?,
+                member_id = ?,
+                member = ?,
+                alliance = ?,
+                member_unbind_available_at = ?
+            WHERE id = ?
+            """,
+            (
+                identity_a["role"],
+                identity_a["league"],
+                identity_a["member_id"],
+                identity_a["member"],
+                identity_a["alliance"],
+                identity_a["member_unbind_available_at"],
+                int(user_b_row["id"]),
+            ),
+        )
+        return identity_a, identity_b
 
     def get_member_cert_scope_name(self, member_row):
         if not member_row:
@@ -651,6 +723,447 @@ class ReviewRequestsMixin:
                 "unbind_available_at": available_at,
             }
         )
+
+    def link_current_user_member(self, current, payload):
+        user = current.get("user") or {}
+        if not user.get("id"):
+            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        if (user.get("role") or "") != ROLE_ALLIANCEADMIN:
+            self.send_json({"error": "当前账号不是盟主，不能直接成为成员"}, status=HTTPStatus.FORBIDDEN)
+            return
+
+        member_id = str(payload.get("member_id", "")).strip()
+        force = bool(payload.get("force"))
+        if not member_id.isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        with open_db() as connection:
+            member = connection.execute("SELECT id, alliance, guild, name, verified FROM members WHERE id = ?", (int(member_id),)).fetchone()
+            if not member:
+                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if int(member["verified"] or 0) == 1:
+                self.send_json({"error": "该成员已经认证，不可成为"}, status=HTTPStatus.CONFLICT)
+                return
+
+            db_user = connection.execute(
+                "SELECT id, role, member_id, member, alliance FROM users WHERE id = ?",
+                (user["id"],),
+            ).fetchone()
+            if not db_user:
+                self.send_json({"error": "用户不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+
+            previous_member_id = db_user["member_id"] or db_user["member"]
+            if previous_member_id and str(previous_member_id) != member_id and not force:
+                self.send_json(
+                    {
+                        "error": "你已有身份，是否强行修改",
+                        "code": "MEMBER_ALREADY_LINKED",
+                        "current_member_id": int(previous_member_id),
+                    },
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
+
+            timestamp = now_text()
+            if previous_member_id and str(previous_member_id) != member_id:
+                connection.execute(
+                    "UPDATE members SET verified = 0, updated_at = ? WHERE id = ?",
+                    (timestamp, int(previous_member_id)),
+                )
+
+            connection.execute(
+                "UPDATE members SET verified = 1, updated_at = ? WHERE id = ?",
+                (timestamp, int(member_id)),
+            )
+            connection.execute(
+                """
+                UPDATE users
+                SET member_id = ?, member = ?, alliance = ?, member_unbind_available_at = NULL
+                WHERE id = ?
+                """,
+                (int(member_id), int(member_id), member["alliance"], user["id"]),
+            )
+            connection.commit()
+
+        update_user_sessions_for_user(
+            user["id"],
+            member_id=int(member_id),
+            member=int(member_id),
+            alliance=member["alliance"],
+            member_unbind_available_at=None,
+        )
+        self.send_json(
+            {
+                "message": "已成为该成员身份",
+                "item": {
+                    "member_id": int(member_id),
+                    "name": member["name"],
+                    "guild": member["guild"],
+                    "alliance": member["alliance"],
+                },
+            }
+        )
+
+    def list_identity_swap_requests(self, current, mark_read=False):
+        user = current.get("user") or {}
+        user_id = int(user.get("id") or 0)
+        if not user_id:
+            return {"items": [], "unread_count": 0}
+
+        with open_db() as connection:
+            self.cleanup_expired_identity_swap_requests(connection)
+            rows = connection.execute(
+                """
+                SELECT r.*,
+                       ru.username AS requester_username,
+                       tu.username AS target_username,
+                       rm.name AS requester_member_name,
+                       rm.alliance AS requester_alliance,
+                       rm.guild AS requester_guild,
+                       tm.name AS target_member_name,
+                       tm.alliance AS target_alliance,
+                       tm.guild AS target_guild
+                FROM identity_swap_requests r
+                LEFT JOIN users ru ON ru.id = r.user_id
+                LEFT JOIN users tu ON tu.id = r.target_user_id
+                LEFT JOIN members rm ON rm.id = r.requester_member_id
+                LEFT JOIN members tm ON tm.id = r.target_member_id
+                WHERE r.user_id = ? OR r.target_user_id = ?
+                ORDER BY r.id DESC
+                """,
+                (user_id, user_id),
+            ).fetchall()
+
+            unread_ids_for_target = [
+                int(row["id"])
+                for row in rows
+                if int(row["target_user_id"] or 0) == user_id and row["status"] == "pending" and int(row["target_is_read"] or 0) == 0
+            ]
+            unread_ids_for_requester = [
+                int(row["id"])
+                for row in rows
+                if int(row["user_id"] or 0) == user_id and row["status"] != "pending" and int(row["requester_is_read"] or 0) == 0
+            ]
+
+            if mark_read:
+                timestamp = now_text()
+                if unread_ids_for_target:
+                    placeholders = ",".join("?" for _ in unread_ids_for_target)
+                    connection.execute(
+                        f"""
+                        UPDATE identity_swap_requests
+                        SET target_is_read = 1, target_read_at = ?
+                        WHERE id IN ({placeholders})
+                        """,
+                        (timestamp, *unread_ids_for_target),
+                    )
+                if unread_ids_for_requester:
+                    placeholders = ",".join("?" for _ in unread_ids_for_requester)
+                    connection.execute(
+                        f"""
+                        UPDATE identity_swap_requests
+                        SET requester_is_read = 1, requester_read_at = ?
+                        WHERE id IN ({placeholders})
+                        """,
+                        (timestamp, *unread_ids_for_requester),
+                    )
+                if unread_ids_for_target or unread_ids_for_requester:
+                    connection.commit()
+
+        items = []
+        for row in rows:
+            is_outgoing = int(row["user_id"] or 0) == user_id
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "user_id": int(row["user_id"]),
+                    "target_user_id": int(row["target_user_id"]),
+                    "requester_member_id": int(row["requester_member_id"]),
+                    "target_member_id": int(row["target_member_id"]),
+                    "status": row["status"],
+                    "message": row["message"] or "",
+                    "review_comment": row["review_comment"] or "",
+                    "created_at": row["created_at"],
+                    "reviewed_at": row["reviewed_at"],
+                    "reviewer_id": row["reviewer_id"],
+                    "requester_username": row["requester_username"] or "",
+                    "target_username": row["target_username"] or "",
+                    "requester_member_name": row["requester_member_name"] or "",
+                    "requester_alliance": row["requester_alliance"] or "",
+                    "requester_guild": row["requester_guild"] or "",
+                    "target_member_name": row["target_member_name"] or "",
+                    "target_alliance": row["target_alliance"] or "",
+                    "target_guild": row["target_guild"] or "",
+                    "is_outgoing": is_outgoing,
+                    "can_review": (not is_outgoing) and row["status"] == "pending",
+                    "is_read": 1
+                    if mark_read
+                    else (
+                        int(row["requester_is_read"] or 0)
+                        if is_outgoing and row["status"] != "pending"
+                        else int(row["target_is_read"] or 0)
+                    ),
+                }
+            )
+
+        return {
+            "items": items,
+            "unread_count": 0 if mark_read else len(unread_ids_for_target) + len(unread_ids_for_requester),
+        }
+
+    def create_identity_swap_request(self, current, payload):
+        user = current.get("user") or {}
+        current_user_id = int(user.get("id") or 0)
+        target_member_id = str(payload.get("member_id", "")).strip()
+        message = str(payload.get("message", payload.get("swap_message", ""))).strip()
+        if not current_user_id:
+            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        if not target_member_id.isdigit():
+            self.send_json({"error": "请选择要交换的认证成员"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        with open_db() as connection:
+            self.cleanup_expired_identity_swap_requests(connection)
+            current_row = connection.execute(
+                """
+                SELECT id, username, role, league, member_id, member, alliance, member_unbind_available_at
+                FROM users
+                WHERE id = ?
+                """,
+                (current_user_id,),
+            ).fetchone()
+            if not current_row:
+                self.send_json({"error": "当前用户不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+
+            current_member_id = current_row["member_id"] or current_row["member"]
+            if not current_member_id:
+                self.send_json({"error": "你还没有认证，暂时不能发起交换"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            target_row = connection.execute(
+                """
+                SELECT id, username, role, league, member_id, member, alliance, member_unbind_available_at
+                FROM users
+                WHERE COALESCE(member_id, member) = ?
+                LIMIT 1
+                """,
+                (int(target_member_id),),
+            ).fetchone()
+            if not target_row:
+                self.send_json({"error": "目标成员当前没有绑定账号，不能交换"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if int(target_row["id"]) == current_user_id:
+                self.send_json({"error": "不能向自己发起交换申请"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            target_member_row = connection.execute(
+                "SELECT id, name, alliance, guild, verified FROM members WHERE id = ?",
+                (int(target_member_id),),
+            ).fetchone()
+            if not target_member_row:
+                self.send_json({"error": "目标成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if int(target_member_row["verified"] or 0) != 1:
+                self.send_json({"error": "只能向已认证成员发起交换申请"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            exists = connection.execute(
+                """
+                SELECT id FROM identity_swap_requests
+                WHERE status = 'pending'
+                  AND ((user_id = ? AND target_user_id = ?) OR (user_id = ? AND target_user_id = ?))
+                LIMIT 1
+                """,
+                (current_user_id, int(target_row["id"]), int(target_row["id"]), current_user_id),
+            ).fetchone()
+            if exists:
+                self.send_json({"error": "你们之间已经有待处理的交换申请"}, status=HTTPStatus.CONFLICT)
+                return
+
+            timestamp = now_text()
+            connection.execute(
+                """
+                INSERT INTO identity_swap_requests (
+                    user_id, target_user_id, requester_member_id, target_member_id,
+                    status, message, review_comment,
+                    requester_is_read, requester_read_at,
+                    target_is_read, target_read_at, created_at
+                )
+                VALUES (?, ?, ?, ?, 'pending', ?, '', 1, ?, 0, NULL, ?)
+                """,
+                (
+                    current_user_id,
+                    int(target_row["id"]),
+                    int(current_member_id),
+                    int(target_member_id),
+                    message,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            request_id = int(connection.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            connection.commit()
+
+        broadcast_auth_event(
+            {
+                "type": "identity_swap_request_created",
+                "request_id": request_id,
+                "username": user.get("display_name") or user.get("username") or "",
+            },
+            lambda session: int(session.get("user_id") or 0) == int(target_row["id"]),
+        )
+        self.send_json({"message": "身份交换申请已提交，等待对方确认"}, status=HTTPStatus.CREATED)
+
+    def review_identity_swap_request(self, request_id, payload, current):
+        action = str(payload.get("action", "")).strip().lower()
+        review_comment = str(payload.get("review_comment", payload.get("comment", ""))).strip()
+        if action not in {"approve", "reject"}:
+            self.send_json({"error": "操作无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if not str(request_id).isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        user = current.get("user") or {}
+        reviewer_id = int(user.get("id") or 0)
+        reviewer_name = user.get("display_name") or user.get("username") or "用户"
+        if not reviewer_id:
+            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+
+        with identity_swap_request_review_lock:
+            with open_db() as connection:
+                self.cleanup_expired_identity_swap_requests(connection)
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT *
+                    FROM identity_swap_requests
+                    WHERE id = ?
+                    """,
+                    (request_id,),
+                ).fetchone()
+                if not row:
+                    connection.rollback()
+                    self.send_json({"error": "申请不存在"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                if int(row["target_user_id"] or 0) != reviewer_id:
+                    connection.rollback()
+                    self.send_json({"error": "只有被申请方可以处理该交换申请"}, status=HTTPStatus.FORBIDDEN)
+                    return
+                if row["status"] != "pending":
+                    connection.rollback()
+                    status_label = "已同意" if row["status"] == "approved" else "已拒绝"
+                    self.send_json(
+                        {
+                            "error": f"该申请已处理过（{status_label}）",
+                            "status": row["status"],
+                            "reviewed_at": row["reviewed_at"],
+                            "review_comment": row["review_comment"] or "",
+                        },
+                        status=HTTPStatus.CONFLICT,
+                    )
+                    return
+
+                requester_row = connection.execute(
+                    """
+                    SELECT id, username, role, league, member_id, member, alliance, member_unbind_available_at
+                    FROM users
+                    WHERE id = ?
+                    """,
+                    (int(row["user_id"]),),
+                ).fetchone()
+                target_row = connection.execute(
+                    """
+                    SELECT id, username, role, league, member_id, member, alliance, member_unbind_available_at
+                    FROM users
+                    WHERE id = ?
+                    """,
+                    (int(row["target_user_id"]),),
+                ).fetchone()
+                if not requester_row or not target_row:
+                    connection.rollback()
+                    self.send_json({"error": "交换双方账号不存在"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                if str(requester_row["member_id"] or requester_row["member"] or "") != str(row["requester_member_id"]):
+                    connection.rollback()
+                    self.send_json({"error": "发起方身份已变化，请重新发起申请"}, status=HTTPStatus.CONFLICT)
+                    return
+                if str(target_row["member_id"] or target_row["member"] or "") != str(row["target_member_id"]):
+                    connection.rollback()
+                    self.send_json({"error": "被申请方身份已变化，请重新发起申请"}, status=HTTPStatus.CONFLICT)
+                    return
+
+                timestamp = now_text()
+                if action == "approve":
+                    self.execute_identity_swap(connection, requester_row, target_row)
+
+                updated = connection.execute(
+                    """
+                    UPDATE identity_swap_requests
+                    SET status = ?,
+                        review_comment = ?,
+                        reviewed_at = ?,
+                        reviewer_id = ?,
+                        requester_is_read = 0,
+                        requester_read_at = NULL,
+                        target_is_read = 1,
+                        target_read_at = ?
+                    WHERE id = ? AND status = 'pending'
+                    """,
+                    (
+                        "approved" if action == "approve" else "rejected",
+                        review_comment,
+                        timestamp,
+                        reviewer_id,
+                        timestamp,
+                        int(request_id),
+                    ),
+                )
+                if updated.rowcount != 1:
+                    connection.rollback()
+                    self.send_json({"error": "该申请已处理过"}, status=HTTPStatus.CONFLICT)
+                    return
+                connection.commit()
+
+        if action == "approve":
+            requester_identity = self._build_identity_swap_identity(target_row)
+            target_identity = self._build_identity_swap_identity(requester_row)
+            update_user_sessions_for_user(
+                int(requester_row["id"]),
+                role=requester_identity["role"],
+                league=requester_identity["league"],
+                member_id=requester_identity["member_id"],
+                member=requester_identity["member"],
+                alliance=requester_identity["alliance"],
+                member_unbind_available_at=requester_identity["member_unbind_available_at"],
+            )
+            update_user_sessions_for_user(
+                int(target_row["id"]),
+                role=target_identity["role"],
+                league=target_identity["league"],
+                member_id=target_identity["member_id"],
+                member=target_identity["member"],
+                alliance=target_identity["alliance"],
+                member_unbind_available_at=target_identity["member_unbind_available_at"],
+            )
+
+        broadcast_auth_event(
+            {
+                "type": "identity_swap_request_reviewed",
+                "request_id": int(request_id),
+                "status": "approved" if action == "approve" else "rejected",
+                "reviewed_by": reviewer_name,
+            },
+            lambda session: int(session.get("user_id") or 0) in {int(requester_row["id"]), int(target_row["id"])},
+        )
+        self.send_json({"message": "身份交换已完成" if action == "approve" else "身份交换申请已拒绝"})
 
     def list_admin_role_requests(self, current, mark_read=False):
         user = current.get("user") or {}

@@ -1628,6 +1628,15 @@ td {
   line-height: 1.7;
 }
 
+.identity-swap-summary {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(126, 149, 101, 0.08);
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .notice-modal__actions {
   justify-content: center;
 }

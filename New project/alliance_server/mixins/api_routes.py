@@ -19,6 +19,15 @@ class ApiRoutesMixin:
         if parsed.path == "/api/profile/me/avatar":
             self.send_json(self.get_current_user_avatar())
             return
+        if parsed.path == "/api/profile/me/identity-swap/options":
+            user = self.require_normal_user()
+            if not user:
+                return
+            result = self.list_identity_swap_options(user)
+            if result is None:
+                return
+            self.send_json(result)
+            return
         if parsed.path == "/api/members":
             query = parse_qs(parsed.query)
             self.send_json(self.list_members(query))
@@ -57,6 +66,15 @@ class ApiRoutesMixin:
             query = parse_qs(parsed.query)
             mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
             self.send_json(self.list_admin_role_requests(current, mark_read=mark_read))
+            return
+        if parsed.path == "/api/identity-swap-requests":
+            current = get_current_auth(self)
+            if not current.get("authenticated") or current.get("is_admin"):
+                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            query = parse_qs(parsed.query)
+            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            self.send_json(self.list_identity_swap_requests(current, mark_read=mark_read))
             return
         if parsed.path.startswith("/api/guilds/") and parsed.path.endswith("/members/export"):
             admin = self.require_admin()
@@ -103,6 +121,21 @@ class ApiRoutesMixin:
             if not user:
                 return
             self.upload_current_user_avatar(user)
+            return
+        if parsed.path == "/api/profile/me/member-link":
+            current = get_current_auth(self)
+            if not current.get("authenticated") or current.get("is_admin"):
+                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            payload = self.read_json()
+            self.link_current_user_member(current, payload)
+            return
+        if parsed.path == "/api/profile/me/identity-swap":
+            user = self.require_normal_user()
+            if not user:
+                return
+            payload = self.read_json()
+            self.create_identity_swap_request({"authenticated": True, "user": user, "is_admin": False}, payload)
             return
         if parsed.path == "/api/login":
             AuthHandler(self).login()
@@ -155,6 +188,14 @@ class ApiRoutesMixin:
             payload = self.read_json()
             self.create_admin_role_request(current, payload)
             return
+        if parsed.path == "/api/identity-swap-requests":
+            current = get_current_auth(self)
+            if not current.get("authenticated") or current.get("is_admin"):
+                self.send_json({"error": "仅普通用户可发起交换申请"}, status=HTTPStatus.FORBIDDEN)
+                return
+            payload = self.read_json()
+            self.create_identity_swap_request(current, payload)
+            return
         if parsed.path.startswith("/api/member-cert-requests/"):
             current = get_current_auth(self)
             if not current.get("authenticated") or not self.has_permission(current.get("user") or {}, "manage_members"):
@@ -171,6 +212,15 @@ class ApiRoutesMixin:
             payload = self.read_json()
             request_id = parsed.path.rsplit("/", 1)[-1]
             self.review_admin_role_request(request_id, payload, {"authenticated": True, "user": user})
+            return
+        if parsed.path.startswith("/api/identity-swap-requests/"):
+            current = get_current_auth(self)
+            if not current.get("authenticated") or current.get("is_admin"):
+                self.send_json({"error": "仅普通用户可处理交换申请"}, status=HTTPStatus.FORBIDDEN)
+                return
+            payload = self.read_json()
+            request_id = parsed.path.rsplit("/", 1)[-1]
+            self.review_identity_swap_request(request_id, payload, current)
             return
         if parsed.path == "/api/melon":
             user = self.get_current_user_or_admin()

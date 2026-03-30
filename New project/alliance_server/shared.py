@@ -174,6 +174,7 @@ auth_ws_clients = {}
 auth_ws_clients_lock = threading.Lock()
 admin_role_request_review_lock = threading.Lock()
 member_cert_request_review_lock = threading.Lock()
+identity_swap_request_review_lock = threading.Lock()
 WS_MAGIC_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # Thread pool for async database writes
@@ -535,6 +536,40 @@ def initialize_database():
             connection.execute("ALTER TABLE admin_role_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'guild'")
         if "review_comment" not in admin_role_request_columns:
             connection.execute("ALTER TABLE admin_role_requests ADD COLUMN review_comment TEXT NOT NULL DEFAULT ''")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS identity_swap_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                target_user_id INTEGER NOT NULL,
+                requester_member_id INTEGER NOT NULL,
+                target_member_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                message TEXT NOT NULL DEFAULT '',
+                review_comment TEXT NOT NULL DEFAULT '',
+                requester_is_read INTEGER NOT NULL DEFAULT 1,
+                requester_read_at TEXT,
+                target_is_read INTEGER NOT NULL DEFAULT 0,
+                target_read_at TEXT,
+                created_at TEXT NOT NULL,
+                reviewed_at TEXT,
+                reviewer_id INTEGER
+            )
+            """
+        )
+        identity_swap_request_columns = [row["name"] for row in connection.execute("PRAGMA table_info(identity_swap_requests)").fetchall()]
+        if "message" not in identity_swap_request_columns:
+            connection.execute("ALTER TABLE identity_swap_requests ADD COLUMN message TEXT NOT NULL DEFAULT ''")
+        if "review_comment" not in identity_swap_request_columns:
+            connection.execute("ALTER TABLE identity_swap_requests ADD COLUMN review_comment TEXT NOT NULL DEFAULT ''")
+        if "requester_is_read" not in identity_swap_request_columns:
+            connection.execute("ALTER TABLE identity_swap_requests ADD COLUMN requester_is_read INTEGER NOT NULL DEFAULT 1")
+        if "requester_read_at" not in identity_swap_request_columns:
+            connection.execute("ALTER TABLE identity_swap_requests ADD COLUMN requester_read_at TEXT")
+        if "target_is_read" not in identity_swap_request_columns:
+            connection.execute("ALTER TABLE identity_swap_requests ADD COLUMN target_is_read INTEGER NOT NULL DEFAULT 0")
+        if "target_read_at" not in identity_swap_request_columns:
+            connection.execute("ALTER TABLE identity_swap_requests ADD COLUMN target_read_at TEXT")
 
         admin_count = connection.execute("SELECT COUNT(*) AS count FROM admins").fetchone()["count"]
         if admin_count == 0:

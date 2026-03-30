@@ -1,8 +1,44 @@
 from alliance_server.shared import *
 
-from auth import get_current_auth
+from auth import get_current_auth, normalize_league_scope, normalize_role, update_user_sessions_for_user
 
 class ProfileExportMixin:
+    def list_identity_swap_options(self, user):
+        current_member_id = user.get("member_id") or user.get("member")
+        if not current_member_id:
+            self.send_json({"error": "你还没有认证，暂时不能交换身份"}, status=HTTPStatus.BAD_REQUEST)
+            return None
+        with open_db() as connection:
+            rows = connection.execute(
+                """
+                SELECT m.*, u.id AS user_id, u.username, u.role AS user_role
+                FROM members m
+                INNER JOIN users u ON COALESCE(u.member_id, u.member) = m.id
+                WHERE m.verified = 1
+                ORDER BY m.alliance ASC, m.guild_code ASC, m.guild_prefix ASC, m.guild ASC, m.name ASC
+                """
+            ).fetchall()
+
+        items = []
+        for row in rows:
+            member = serialize_member(dict(row))
+            if current_member_id and str(member["id"]) == str(current_member_id):
+                continue
+            items.append(
+                {
+                    "member_id": member["id"],
+                    "user_id": row["user_id"],
+                    "username": row["username"],
+                    "user_role": row["user_role"],
+                    "alliance": member["alliance"],
+                    "guild": member["guild"],
+                    "guild_display": member["guild_display"],
+                    "name": member["name"],
+                    "verified": member["verified"],
+                }
+            )
+        return {"items": items}
+
     def import_members_from_excel(self):
         """从Excel文件导入成员数据"""
         form = parse_form_data(self)
@@ -486,6 +522,147 @@ class ProfileExportMixin:
             connection.commit()
         update_user_sessions_for_user(user["id"], avatar_url="")
         self.send_json({"message": "头像已删除", "avatar_url": ""})
+
+    def swap_current_user_identity(self, user, payload):
+        target_member_id = str(payload.get("member_id", "")).strip()
+        if not target_member_id.isdigit():
+            self.send_json({"error": "请选择要交换的认证成员"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        current_user_id = int(user["id"])
+        with open_db() as connection:
+            current_row = connection.execute(
+                """
+                SELECT id, username, role, league, member_id, member, alliance, member_unbind_available_at
+                FROM users
+                WHERE id = ?
+                """,
+                (current_user_id,),
+            ).fetchone()
+            if not current_row:
+                self.send_json({"error": "当前用户不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if not (current_row["member_id"] or current_row["member"]):
+                self.send_json({"error": "你还没有认证，暂时不能交换身份"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            target_row = connection.execute(
+                """
+                SELECT id, username, role, league, member_id, member, alliance, member_unbind_available_at
+                FROM users
+                WHERE COALESCE(member_id, member) = ?
+                LIMIT 1
+                """,
+                (int(target_member_id),),
+            ).fetchone()
+            if not target_row:
+                self.send_json({"error": "目标成员没有绑定到用户，无法交换身份"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if int(target_row["id"]) == current_user_id:
+                self.send_json({"error": "不能与自己当前的身份交换"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            target_member_row = connection.execute(
+                "SELECT id, name, alliance, guild, verified FROM members WHERE id = ?",
+                (int(target_member_id),),
+            ).fetchone()
+            if not target_member_row:
+                self.send_json({"error": "目标成员不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if int(target_member_row["verified"] or 0) != 1:
+                self.send_json({"error": "只能和已认证成员交换身份"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            current_identity = {
+                "role": normalize_role(current_row["role"]),
+                "league": normalize_league_scope(current_row["league"]),
+                "member_id": current_row["member_id"],
+                "member": current_row["member"],
+                "alliance": str(current_row["alliance"] or "").strip(),
+                "member_unbind_available_at": current_row["member_unbind_available_at"],
+            }
+            target_identity = {
+                "role": normalize_role(target_row["role"]),
+                "league": normalize_league_scope(target_row["league"]),
+                "member_id": target_row["member_id"],
+                "member": target_row["member"],
+                "alliance": str(target_row["alliance"] or "").strip(),
+                "member_unbind_available_at": target_row["member_unbind_available_at"],
+            }
+
+            connection.execute(
+                """
+                UPDATE users
+                SET role = ?,
+                    league = ?,
+                    member_id = ?,
+                    member = ?,
+                    alliance = ?,
+                    member_unbind_available_at = ?
+                WHERE id = ?
+                """,
+                (
+                    target_identity["role"],
+                    target_identity["league"],
+                    target_identity["member_id"],
+                    target_identity["member"],
+                    target_identity["alliance"],
+                    target_identity["member_unbind_available_at"],
+                    current_user_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE users
+                SET role = ?,
+                    league = ?,
+                    member_id = ?,
+                    member = ?,
+                    alliance = ?,
+                    member_unbind_available_at = ?
+                WHERE id = ?
+                """,
+                (
+                    current_identity["role"],
+                    current_identity["league"],
+                    current_identity["member_id"],
+                    current_identity["member"],
+                    current_identity["alliance"],
+                    current_identity["member_unbind_available_at"],
+                    int(target_row["id"]),
+                ),
+            )
+            connection.commit()
+
+        update_user_sessions_for_user(
+            current_user_id,
+            role=target_identity["role"],
+            league=target_identity["league"],
+            member_id=target_identity["member_id"],
+            member=target_identity["member"],
+            alliance=target_identity["alliance"],
+            member_unbind_available_at=target_identity["member_unbind_available_at"],
+        )
+        update_user_sessions_for_user(
+            int(target_row["id"]),
+            role=current_identity["role"],
+            league=current_identity["league"],
+            member_id=current_identity["member_id"],
+            member=current_identity["member"],
+            alliance=current_identity["alliance"],
+            member_unbind_available_at=current_identity["member_unbind_available_at"],
+        )
+        self.send_json(
+            {
+                "message": "身份交换成功",
+                "target_member": {
+                    "id": int(target_member_row["id"]),
+                    "name": target_member_row["name"],
+                    "alliance": target_member_row["alliance"],
+                    "guild": target_member_row["guild"],
+                },
+            }
+        )
 
     def delete_current_user_avatar_file(self, avatar_path):
         if not avatar_path:

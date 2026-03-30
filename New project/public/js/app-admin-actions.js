@@ -38,6 +38,18 @@ function handleModalDismiss(event) {
     closeCertRequestModal();
     return;
   }
+  if (target.dataset.closeModal === "identity-swap") {
+    closeIdentitySwapModal();
+    return;
+  }
+  if (target.dataset.closeModal === "identity-swap-duplicate") {
+    closeIdentitySwapModal();
+    return;
+  }
+  if (target.dataset.closeModal === "identity-swap-request") {
+    closeIdentitySwapRequestModal();
+    return;
+  }
   if (target.dataset.closeModal === "role-request") {
     closeRoleRequestModal();
     return;
@@ -105,6 +117,14 @@ function handleModalKeydown(event) {
   }
   if (event.key === "Escape" && !els.certRequestModal?.classList.contains("hidden")) {
     closeCertRequestModal();
+    return;
+  }
+  if (event.key === "Escape" && !els.identitySwapModal?.classList.contains("hidden")) {
+    closeIdentitySwapModal();
+    return;
+  }
+  if (event.key === "Escape" && !els.identitySwapRequestModal?.classList.contains("hidden")) {
+    closeIdentitySwapRequestModal();
     return;
   }
   if (event.key === "Escape" && !els.memberEditModal?.classList.contains("hidden")) {
@@ -241,6 +261,46 @@ async function handleGuildDetailAction(event) {
         toast("认证申请已提交");
       })
       .catch((error) => toast(error.message));
+    return;
+  }
+  if (target.dataset.action === "become-member") {
+    const memberId = target.dataset.id;
+    if (!state.me.authenticated) {
+      switchView("login");
+      toast("请先登录后再成为成员");
+      return;
+    }
+    if (currentUserRole() !== "AllianceAdmin") {
+      toast("当前账号不是盟主，不能直接成为成员");
+      return;
+    }
+    if (!memberId) return;
+    const member = state.members.find((item) => String(item.id) === String(memberId));
+    if (!member) return;
+    const becomeRequest = async (force = false) => {
+      try {
+        const result = await request("/api/profile/me/member-link", {
+          method: "POST",
+          body: JSON.stringify({ member_id: memberId, force }),
+        });
+        await refreshAll();
+        toast(result.message || "已成为该成员身份");
+      } catch (error) {
+        if (!force && String(error.message || "").includes("你已有身份")) {
+          const confirmed = await openDangerConfirm({
+            title: "强行修改身份",
+            message: `你已有身份，是否强行修改为 ${member.name}？原身份会被解绑，原成员认证也会被清空。`,
+            confirmText: "确认修改",
+          });
+          if (confirmed) {
+            await becomeRequest(true);
+          }
+          return;
+        }
+        toast(error.message);
+      }
+    };
+    becomeRequest(false);
     return;
   }
   if (target.dataset.action === "open-member-cert") {

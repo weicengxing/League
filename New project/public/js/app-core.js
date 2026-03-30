@@ -139,6 +139,14 @@ function connectAuthWebSocket() {
         }
         if (data.type === "member_cert_request_reviewed") {
           handleMemberCertRequestReviewed(data);
+          return;
+        }
+        if (data.type === "identity_swap_request_created") {
+          handleIdentitySwapRequestCreated(data);
+          return;
+        }
+        if (data.type === "identity_swap_request_reviewed") {
+          handleIdentitySwapRequestReviewed(data);
         }
       } catch (error) {
         console.error("[Auth WS] Parse error:", error);
@@ -231,6 +239,36 @@ async function handleMemberCertRequestReviewed(data) {
   toast(`认证申请已被处理：${statusLabel}`);
 }
 
+async function handleIdentitySwapRequestCreated(data) {
+  try {
+    await loadIdentitySwapRequests();
+    renderAuth();
+    if (!els.identitySwapRequestModal?.classList.contains("hidden")) {
+      renderIdentitySwapRequestList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh identity swap requests:", error);
+  }
+  toast(`新的身份交换申请：${data?.username || "有用户"}发起了申请`);
+}
+
+async function handleIdentitySwapRequestReviewed(data) {
+  try {
+    await Promise.all([fetchMe(), loadDashboard(), fetchMembers()]);
+    await loadIdentitySwapRequests();
+    renderAuth();
+    renderProfilePage();
+    renderGuildDetail();
+    if (!els.identitySwapRequestModal?.classList.contains("hidden")) {
+      renderIdentitySwapRequestList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh reviewed identity swap requests:", error);
+  }
+  const statusLabel = data?.status === "approved" ? "已同意" : "已拒绝";
+  toast(`身份交换申请已被处理：${statusLabel}`);
+}
+
 const state = {
   dashboard: null,
   members: [],
@@ -241,6 +279,9 @@ const state = {
   memberRequests: [],
   memberRequestUnreadCount: 0,
   myMemberRequests: [],
+  identitySwapOptions: [],
+  identitySwapRequests: [],
+  identitySwapUnreadCount: 0,
   selectedMemberCertId: null,
   currentView: "guilds",
   selectedGuild: null,
@@ -294,6 +335,8 @@ const els = {
   sortSelect: document.querySelector("#sortSelect"),
   roleRequestBtn: document.querySelector("#roleRequestBtn"),
   certRequestBtn: document.querySelector("#certRequestBtn"),
+  identitySwapBtn: document.querySelector("#identitySwapBtn"),
+  identitySwapRequestBtn: document.querySelector("#identitySwapRequestBtn"),
   roleApplyBtn: document.querySelector("#roleApplyBtn"),
   roleRequestModal: document.querySelector("#roleRequestModal"),
   roleRequestList: document.querySelector("#roleRequestList"),
@@ -304,6 +347,15 @@ const els = {
   roleApplyAlliance: document.querySelector("#roleApplyAlliance"),
   certRequestModal: document.querySelector("#certRequestModal"),
   certRequestList: document.querySelector("#certRequestList"),
+  identitySwapModal: document.querySelector("#identitySwapModal"),
+  identitySwapForm: document.querySelector("#identitySwapModal #identitySwapForm"),
+  identitySwapAlliance: document.querySelector("#identitySwapModal #identitySwapAlliance"),
+  identitySwapGuild: document.querySelector("#identitySwapModal #identitySwapGuild"),
+  identitySwapMember: document.querySelector("#identitySwapModal #identitySwapMember"),
+  identitySwapMessage: document.querySelector("#identitySwapModal #identitySwapMessage"),
+  identitySwapSummary: document.querySelector("#identitySwapModal #identitySwapSummary"),
+  identitySwapRequestModal: document.querySelector("#identitySwapRequestModal"),
+  identitySwapRequestList: document.querySelector("#identitySwapRequestList"),
   loginForm: document.querySelector("#loginForm"),
   logoutBtn: document.querySelector("#logoutBtn"),
   loginState: document.querySelector("#loginState"),
@@ -420,6 +472,10 @@ function ensureRoleUi() {
       <button id="certRequestBtn" type="button" class="ghost-btn action-btn--approve">
         认证申请<span id="certRequestBadge" class="btn-badge hidden">0</span>
       </button>
+      <button id="identitySwapBtn" type="button" class="ghost-btn">交换身份</button>
+      <button id="identitySwapRequestBtn" type="button" class="ghost-btn">
+        交换申请<span id="identitySwapRequestBadge" class="btn-badge hidden">0</span>
+      </button>
     `;
     document.querySelector(".board-top")?.appendChild(topActions);
   }
@@ -431,6 +487,10 @@ function ensureRoleUi() {
   const certRequestBtn = document.querySelector("#certRequestBtn");
   if (certRequestBtn && !certRequestBtn.querySelector("#certRequestBadge")) {
     certRequestBtn.insertAdjacentHTML("beforeend", `<span id="certRequestBadge" class="btn-badge hidden">0</span>`);
+  }
+  const identitySwapRequestBtn = document.querySelector("#identitySwapRequestBtn");
+  if (identitySwapRequestBtn && !identitySwapRequestBtn.querySelector("#identitySwapRequestBadge")) {
+    identitySwapRequestBtn.insertAdjacentHTML("beforeend", `<span id="identitySwapRequestBadge" class="btn-badge hidden">0</span>`);
   }
 
   if (!document.querySelector("#roleApplyModal")) {
@@ -481,21 +541,42 @@ function ensureRoleUi() {
           <div id="certRequestList" class="modal__body"></div>
         </div>
       </div>
+      <div id="identitySwapRequestModal" class="modal hidden">
+        <div class="modal__backdrop" data-close-modal="identity-swap-request"></div>
+        <div class="modal__dialog modal__dialog--wide">
+          <div class="modal__head">
+            <h3>身份交换申请</h3>
+            <button type="button" class="ghost-btn" data-close-modal="identity-swap-request">关闭</button>
+          </div>
+          <div id="identitySwapRequestList" class="modal__body"></div>
+        </div>
+      </div>
     `);
   }
 
   els.roleApplyBtn = document.querySelector("#roleApplyBtn");
   els.roleRequestBtn = document.querySelector("#roleRequestBtn");
   els.certRequestBtn = document.querySelector("#certRequestBtn");
+  els.identitySwapBtn = document.querySelector("#identitySwapBtn");
+  els.identitySwapRequestBtn = document.querySelector("#identitySwapRequestBtn");
   els.roleApplyModal = document.querySelector("#roleApplyModal");
   els.roleRequestModal = document.querySelector("#roleRequestModal");
   els.certRequestModal = document.querySelector("#certRequestModal");
+  els.identitySwapModal = document.querySelector("#identitySwapModal");
+  els.identitySwapRequestModal = document.querySelector("#identitySwapRequestModal");
   els.roleApplyForm = document.querySelector("#roleApplyForm");
   els.roleApplyType = document.querySelector("#roleApplyType");
   els.roleApplyTargetLabel = document.querySelector("#roleApplyTargetLabel");
   els.roleApplyAlliance = document.querySelector("#roleApplyAlliance");
   els.roleRequestList = document.querySelector("#roleRequestList");
   els.certRequestList = document.querySelector("#certRequestList");
+  els.identitySwapForm = document.querySelector("#identitySwapModal #identitySwapForm");
+  els.identitySwapAlliance = document.querySelector("#identitySwapModal #identitySwapAlliance");
+  els.identitySwapGuild = document.querySelector("#identitySwapModal #identitySwapGuild");
+  els.identitySwapMember = document.querySelector("#identitySwapModal #identitySwapMember");
+  els.identitySwapMessage = document.querySelector("#identitySwapModal #identitySwapMessage");
+  els.identitySwapSummary = document.querySelector("#identitySwapModal #identitySwapSummary");
+  els.identitySwapRequestList = document.querySelector("#identitySwapRequestList");
 }
 
 function setupUserProfileUI() {
@@ -690,6 +771,12 @@ function bindEvents() {
   els.roleApplyType?.addEventListener("change", syncRoleApplyTargetOptions);
   els.roleRequestBtn?.addEventListener("click", openRoleRequestModal);
   els.certRequestBtn?.addEventListener("click", () => openCertRequestModal());
+  els.identitySwapBtn?.addEventListener("click", openIdentitySwapModal);
+  els.identitySwapRequestBtn?.addEventListener("click", openIdentitySwapRequestModal);
+  els.identitySwapForm?.addEventListener("submit", submitIdentitySwapForm);
+  els.identitySwapAlliance?.addEventListener("change", () => syncIdentitySwapOptions("alliance"));
+  els.identitySwapGuild?.addEventListener("change", () => syncIdentitySwapOptions("guild"));
+  els.identitySwapMember?.addEventListener("change", () => syncIdentitySwapSummary());
   els.exportGuildsBtn?.addEventListener("click", handleGuildExport);
   els.memberForm?.addEventListener("submit", handleMemberSubmit);
   els.importGuildsBtn?.addEventListener("click", triggerGuildExcelImport);
@@ -745,6 +832,11 @@ function bindEvents() {
     const roleAction = event.target.closest("[data-role-request-action]");
     if (!(roleAction instanceof HTMLElement)) return;
     await reviewRoleRequest(roleAction.dataset.id, roleAction.dataset.roleRequestAction);
+  });
+  document.addEventListener("click", async (event) => {
+    const identitySwapAction = event.target.closest("[data-identity-swap-action]");
+    if (!(identitySwapAction instanceof HTMLElement)) return;
+    await reviewIdentitySwapRequest(identitySwapAction.dataset.id, identitySwapAction.dataset.identitySwapAction);
   });
   
   // 创建隐藏的文件输入框用于 Excel 导入
