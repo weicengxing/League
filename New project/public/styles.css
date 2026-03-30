@@ -1271,6 +1271,17 @@ button {
   cursor: not-allowed;
 }
 
+.member-form input:disabled,
+.member-form select:disabled,
+.modal-form input:disabled,
+.modal-form select:disabled {
+  background: #e4dcc7;
+  color: #5f5a49;
+  border-color: rgba(124, 109, 73, 0.28);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 #guildAdminLayout > .panel-card:first-child .panel-card__head {
   margin-bottom: 10px;
 }
