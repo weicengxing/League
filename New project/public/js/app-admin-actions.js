@@ -200,11 +200,11 @@ function handleGuildDetailToolbarAction(event) {
     }
     return;
   }
-  if (target.dataset.action === "add-member" && canManageAlliance(state.members.find((item) => buildGuildKey(item) === state.selectedGuild)?.alliance || getGuildDetail(state.selectedGuild)?.hill || "") && state.selectedGuild) {
+  if (target.dataset.action === "add-member" && canManageGuildScope(state.selectedGuild) && state.selectedGuild) {
     openMemberEditModal(null, state.selectedGuild);
     return;
   }
-  if (target.dataset.action === "import-excel" && canManageAlliance(state.members.find((item) => buildGuildKey(item) === state.selectedGuild)?.alliance || getGuildDetail(state.selectedGuild)?.hill || "") && state.selectedGuild) {
+  if (target.dataset.action === "import-excel" && canManageGuildScope(state.selectedGuild) && state.selectedGuild) {
     triggerExcelImport();
     return;
   }
@@ -282,22 +282,22 @@ async function handleGuildDetailAction(event) {
     return;
   }
   if (target.dataset.action === "delete-screenshot") {
-    if (!canManageAlliance(member.alliance || member.hill || "")) return;
+    if (!canManageGuildScope(member)) return;
     deleteMemberScreenshot(member);
     return;
   }
   if (target.dataset.action === "upload-screenshot") {
-    if (!canManageAlliance(member.alliance || member.hill || "")) return;
+    if (!canManageGuildScope(member)) return;
     triggerMemberScreenshotUpload(member.id);
     return;
   }
   if (target.dataset.action === "edit-detail-member") {
-    if (!canManageAlliance(member.alliance || member.hill || "")) return;
+    if (!canManageGuildScope(member)) return;
     openMemberEditModal(member, buildGuildKey(member));
     return;
   }
   if (target.dataset.action === "delete-detail-member") {
-    if (!canManageAlliance(member.alliance || member.hill || "")) return;
+    if (!canManageGuildScope(member)) return;
     const confirmed = await openDangerConfirm({
       title: "删除成员",
       message: `确定删除成员 ${member.name} 吗？`,
@@ -333,13 +333,16 @@ async function handleAdminMemberAction(event) {
   if (!action || !guildKey) return;
   const guildRow = getAdminGuildRowByKey(guildKey);
   if (!guildRow) return;
+  const canManageGuild = canManageGuildScope(guildKey) || Boolean(state.me?.is_admin);
 
   if (action === "edit-member") {
+    if (!canManageGuild) return;
     openGuildEditModal(guildRow);
     return;
   }
 
   if (action === "delete-member") {
+    if (!canManageGuild) return;
     const confirmed = await openDangerConfirm({
       title: "删除妖盟",
       message: `确定删除妖盟 ${guildRow.displayName} 吗？`,

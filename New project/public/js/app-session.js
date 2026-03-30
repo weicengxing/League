@@ -326,6 +326,94 @@ function hasPermission(permission) {
   return currentUserRole() === "SuperAdmin" || currentPermissions().includes(permission);
 }
 
+function getManageScopeAliases(targetName) {
+  const target = String(targetName || "").trim();
+  const aliases = new Set([target].filter(Boolean));
+  if (!target) return aliases;
+
+  const dashboardGuilds = Array.isArray(state.dashboard?.guilds) ? state.dashboard.guilds : [];
+  for (const guild of dashboardGuilds) {
+    const values = [
+      guild.key,
+      guild.code,
+      guild.prefix,
+      guild.name,
+      guild.display_name,
+      guild.displayName,
+      guild.hill,
+      guild.alliance,
+    ]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+    if (!values.includes(target)) continue;
+    values.forEach((value) => aliases.add(value));
+  }
+
+  for (const member of state.members) {
+    const values = [
+      buildGuildKey(member),
+      member.guild_key,
+      member.guild_code,
+      member.guild_prefix,
+      member.guild,
+      member.alliance,
+      member.hill,
+    ]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+    if (!values.includes(target)) continue;
+    values.forEach((value) => aliases.add(value));
+  }
+
+  return aliases;
+}
+
+function getGuildManageAliases(target) {
+  const aliases = new Set();
+  if (!target) return aliases;
+
+  if (typeof target === "string") {
+    const guildKey = String(target || "").trim();
+    if (!guildKey) return aliases;
+    aliases.add(guildKey);
+    const detail = typeof getGuildDetail === "function" ? getGuildDetail(guildKey) : null;
+    const dashboardGuilds = Array.isArray(state.dashboard?.guilds) ? state.dashboard.guilds : [];
+    const dashboardGuild = dashboardGuilds.find((guild) => String(guild.key || [guild.code || "", guild.prefix || "", guild.name || ""].join("|")).trim() === guildKey);
+    for (const value of [
+      guildKey,
+      detail?.key,
+      detail?.name,
+      detail?.hill,
+      dashboardGuild?.key,
+      dashboardGuild?.code,
+      dashboardGuild?.prefix,
+      dashboardGuild?.name,
+      dashboardGuild?.display_name,
+      dashboardGuild?.displayName,
+      dashboardGuild?.hill,
+      dashboardGuild?.alliance,
+    ]) {
+      const normalized = String(value || "").trim();
+      if (normalized) aliases.add(normalized);
+    }
+    return aliases;
+  }
+
+  for (const value of [
+    buildGuildKey(target),
+    target.guild_key,
+    target.guild_code,
+    target.guild_prefix,
+    target.guild,
+    target.alliance,
+    target.hill,
+  ]) {
+    const normalized = String(value || "").trim();
+    if (normalized) aliases.add(normalized);
+  }
+  return aliases;
+}
+
 function canManageAlliance(allianceName) {
   if (!state.me?.authenticated || !hasPermission("manage_members")) {
     return false;
@@ -333,9 +421,42 @@ function canManageAlliance(allianceName) {
   if (currentUserRole() === "SuperAdmin") {
     return true;
   }
+  if (currentUserRole() !== "AllianceAdmin") {
+    return false;
+  }
+
+  const scopes = getManagedLeagueScopes();
+  const targetAliases = getManageScopeAliases(allianceName);
+  if (scopes.length) {
+    return scopes.some((scope) => targetAliases.has(scope));
+  }
+
   const managedAlliance = String(state.me.user?.alliance || "").trim();
-  const targetAlliance = String(allianceName || "").trim();
-  return Boolean(managedAlliance) && managedAlliance === targetAlliance;
+  return Boolean(managedAlliance) && targetAliases.has(managedAlliance);
+}
+
+function canManageGuildScope(target) {
+  if (!state.me?.authenticated || !hasPermission("manage_members")) {
+    return false;
+  }
+  if (currentUserRole() === "SuperAdmin") {
+    return true;
+  }
+  if (currentUserRole() !== "AllianceAdmin") {
+    return false;
+  }
+
+  const scopes = getManagedLeagueScopes();
+  const targetAliases = getGuildManageAliases(target);
+  if (!targetAliases.size) {
+    return false;
+  }
+  if (scopes.length) {
+    return scopes.some((scope) => targetAliases.has(scope));
+  }
+
+  const managedAlliance = String(state.me.user?.alliance || "").trim();
+  return Boolean(managedAlliance) && targetAliases.has(managedAlliance);
 }
 
 function getManagedLeagueScopes() {

@@ -16,10 +16,12 @@
       <td>${escapeHtml(formatNumber(guild.power || 0))}</td>
       <td>${escapeHtml(normalizeEmptyDisplay(guild.leaderName) || "-")}</td>
       <td>
-        <div class="actions">
-          <button class="action-btn action-btn--edit" data-action="edit-member" data-guild-key="${escapeHtml(guild.key)}">编辑</button>
-          <button class="action-btn action-btn--delete" data-action="delete-member" data-guild-key="${escapeHtml(guild.key)}">删除</button>
-        </div>
+        ${canManageGuildScope(guild.key) || Boolean(state.me?.is_admin) ? `
+          <div class="actions">
+            <button class="action-btn action-btn--edit" data-action="edit-member" data-guild-key="${escapeHtml(guild.key)}">编辑</button>
+            <button class="action-btn action-btn--delete" data-action="delete-member" data-guild-key="${escapeHtml(guild.key)}">删除</button>
+          </div>
+        ` : `<span class="table-note">无权限</span>`}
       </td>
     </tr>
   `).join("");
@@ -104,6 +106,8 @@ function openGuildEditModal(guildRow) {
   if (els.guildEditAlliance) els.guildEditAlliance.value = guildRow.alliance || "";
   if (els.guildEditCode) els.guildEditCode.value = guildRow.code || "";
   if (els.guildEditPrefix) els.guildEditPrefix.value = guildRow.prefix || "";
+  if (els.guildEditCode) els.guildEditCode.disabled = true;
+  if (els.guildEditPrefix) els.guildEditPrefix.disabled = true;
   if (els.guildEditPower) els.guildEditPower.value = formatNumber(guildRow.power || 0);
   els.guildEditName.value = guildRow.shortName || "";
   els.guildEditLeader.value = normalizeEmptyDisplay(guildRow.leaderName);

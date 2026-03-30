@@ -494,8 +494,7 @@ function renderGuildDetail() {
   els.guildDetailTitle.textContent = detail.name;
   els.guildDetailMeta.textContent = `${detail.hill} · ${detail.members.length} 名成员 · 总战力 ${formatNumber(detail.power)}`;
   renderGuildDetailFilters(detail.members);
-  const detailAlliance = detail.members[0]?.alliance || detail.hill || "";
-  const canManageCurrentGuild = canManageAlliance(detailAlliance) || Boolean(state.me?.is_admin);
+  const canManageCurrentGuild = canManageGuildScope(detail.key) || Boolean(state.me?.is_admin);
   if (els.guildDetailActions) {
     els.guildDetailActions.innerHTML = canManageCurrentGuild
       ? `<button type="button" class="primary-btn" data-action="import-excel">导入 Excel</button>
@@ -550,7 +549,7 @@ function renderGuildDetail() {
             `}
           </div>
         </div>
-        ${canManageAlliance(detail.alliance || detail.hill || "") ? `
+        ${canManageGuildScope(member) ? `
           <div class="detail-member-card__actions">
             <button type="button" class="action-btn action-btn--upload" data-action="upload-screenshot" data-id="${member.id}">${member.screenshot_url ? "替换截图" : "上传截图"}</button>
             ${member.screenshot_url ? `<button type="button" class="action-btn action-btn--preview" data-action="preview-screenshot" data-id="${member.id}">预览截图</button>` : ""}

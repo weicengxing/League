@@ -321,18 +321,21 @@ class MemberGuildMixin:
         self.send_json({"message": "成员更新成功", "item": member})
 
     def update_guild(self, guild_key, payload):
-        try:
-            guild = validate_guild(payload)
-        except ValueError as error:
-            self.send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
-            return
-        next_key = build_guild_key(guild["guild_code"], guild["guild_prefix"], guild["guild"])
         timestamp = now_text()
         with open_db() as connection:
             existing = connection.execute("SELECT * FROM guild_registry WHERE guild_key = ?", (guild_key,)).fetchone()
             if not existing:
                 self.send_json({"error": "妖盟不存在"}, status=HTTPStatus.NOT_FOUND)
                 return
+            locked_payload = dict(payload)
+            locked_payload["guild_code"] = existing["guild_code"]
+            locked_payload["guild_prefix"] = existing["guild_prefix"]
+            try:
+                guild = validate_guild(locked_payload)
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            next_key = build_guild_key(guild["guild_code"], guild["guild_prefix"], guild["guild"])
             duplicate_code = guild_exists(connection, guild["guild_code"], guild["guild_prefix"], guild["guild"], exclude_key=guild_key)
             if duplicate_code:
                 self.send_json({"error": f"妖盟编号 {guild['guild_code'] or guild['guild']} 已存在，不能重复保存"}, status=HTTPStatus.CONFLICT)
