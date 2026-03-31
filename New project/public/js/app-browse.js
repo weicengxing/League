@@ -219,7 +219,7 @@ async function deleteOwnAvatar() {
 function renderCurrentUserRoleBadge() {
   const role = state.me?.user?.role || currentUserRole();
   if (window.UserRoleBadges?.renderRoleBadge) {
-    return window.UserRoleBadges.renderRoleBadge(role);
+    return window.UserRoleBadges.renderRoleBadge(state.me?.user || role);
   }
   return `<span class="profile-chip">${escapeHtml(role || "Guest")}</span>`;
 }

@@ -135,7 +135,7 @@ function getGroupChatCreateLimitText() {
 function renderGroupChatCreateHint() {
   const role = currentUserRole();
   const roleBadge = window.UserRoleBadges?.renderRoleBadge
-    ? window.UserRoleBadges.renderRoleBadge(role)
+    ? window.UserRoleBadges.renderRoleBadge(state.me?.user || role)
     : `<span>${escapeHtml(role)}</span>`;
   return `
     <div class="group-chat-create-hint__badge">${roleBadge}</div>

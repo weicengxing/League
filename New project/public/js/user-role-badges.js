@@ -9,31 +9,50 @@
     AllianceAdmin: {
       key: "allianceadmin",
       label: "联盟盟主",
-      icon: "✧",
+      icon: "✦",
       aura: "赤曜王印",
     },
     VerifiedUser: {
       key: "verifieduser",
       label: "妖盟盟主",
-      icon: "⬢",
-      aura: "玄曜盟纹",
+      icon: "◆",
+      aura: "玄盟纹章",
     },
     Verified: {
       key: "verified",
       label: "认证用户",
-      icon: "◈",
+      icon: "●",
       aura: "紫穹星徽",
     },
     Guest: {
       key: "guest",
       label: "Guest",
-      icon: "◌",
+      icon: "●",
       aura: "流沙访客",
     },
   };
 
-  function getRoleBadgeMeta(role) {
-    const normalizedRole = String(role || "").trim();
+  function extractLeagueGuildCodes(value) {
+    const matches = String(value || "").match(/\d+/g) || [];
+    return matches.filter((item, index, list) => list.indexOf(item) === index);
+  }
+
+  function resolveBadgeRole(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return String(input || "").trim();
+    }
+
+    const role = String(input.role || "").trim();
+    if (role !== "AllianceAdmin") {
+      return role;
+    }
+
+    const guildCodeCount = extractLeagueGuildCodes(input.league || input.League).length;
+    return guildCodeCount > 1 ? "AllianceAdmin" : "VerifiedUser";
+  }
+
+  function getRoleBadgeMeta(input) {
+    const normalizedRole = resolveBadgeRole(input);
     return ROLE_BADGE_MAP[normalizedRole] || ROLE_BADGE_MAP.Guest;
   }
 
@@ -46,8 +65,8 @@
       .replace(/'/g, "&#39;");
   }
 
-  function renderRoleBadge(role) {
-    const meta = getRoleBadgeMeta(role);
+  function renderRoleBadge(input) {
+    const meta = getRoleBadgeMeta(input);
     return `
       <span class="user-role-badge user-role-badge--${escapeHtml(meta.key)}" data-role-badge="${escapeHtml(meta.key)}">
         <span class="user-role-badge__flare" aria-hidden="true"></span>
