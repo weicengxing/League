@@ -256,6 +256,26 @@ async function fetchMe() {
       state.identitySwapRequests = [];
       state.identitySwapUnreadCount = 0;
     }
+    try {
+      await loadGroupChats();
+    } catch {
+      state.groupChats = [];
+      state.groupChatUnreadCount = 0;
+      state.groupChatMessages = [];
+      state.selectedGroupChatId = null;
+    }
+    try {
+      await loadGroupChatInvitations();
+    } catch {
+      state.groupChatInvitations = [];
+      state.groupChatInvitationUnreadCount = 0;
+    }
+    try {
+      await loadUserMessages();
+    } catch {
+      state.userMessages = [];
+      state.userMessageUnreadCount = 0;
+    }
   } else {
     disconnectAuthWebSocket();
     state.myMemberRequests = [];
@@ -264,9 +284,18 @@ async function fetchMe() {
     state.roleRequests = [];
     state.identitySwapOptions = [];
     state.identitySwapRequests = [];
+    state.groupChats = [];
+    state.groupChatInvitations = [];
+    state.groupChatMessages = [];
+    state.selectedGroupChatId = null;
+    state.userMessageOptions = [];
+    state.userMessages = [];
     state.roleRequestUnreadCount = 0;
     state.memberRequestUnreadCount = 0;
     state.identitySwapUnreadCount = 0;
+    state.groupChatUnreadCount = 0;
+    state.groupChatInvitationUnreadCount = 0;
+    state.userMessageUnreadCount = 0;
   }
   renderAuth();
   renderFeeds();
@@ -527,6 +556,75 @@ async function loadIdentitySwapRequests(markRead = false) {
   const data = await request(`/api/identity-swap-requests${query ? `?${query}` : ""}`);
   state.identitySwapRequests = data.items || [];
   state.identitySwapUnreadCount = Number(data.unread_count || 0);
+}
+
+async function loadGroupChats() {
+  if (!state.me?.authenticated || state.me?.is_admin) {
+    state.groupChats = [];
+    state.groupChatUnreadCount = 0;
+    state.groupChatMessages = [];
+    state.selectedGroupChatId = null;
+    return;
+  }
+  const data = await request("/api/group-chats");
+  state.groupChats = data.items || [];
+  state.groupChatUnreadCount = Number(data.unread_count || 0);
+  if (!state.selectedGroupChatId || !state.groupChats.some((item) => String(item.id) === String(state.selectedGroupChatId))) {
+    state.selectedGroupChatId = state.groupChats[0]?.id || null;
+    state.groupChatMessages = [];
+  }
+  state.groupChatCreateLimit = data.create_limit;
+  state.groupChatCreatedCount = Number(data.created_count || 0);
+  state.groupChatRoleKind = data.role_kind || "";
+}
+
+async function loadGroupChatMessages(groupChatId, markRead = false) {
+  if (!groupChatId) {
+    state.groupChatMessages = [];
+    return;
+  }
+  const params = new URLSearchParams();
+  if (markRead) params.set("mark_read", "1");
+  params.set("limit", "100");
+  const data = await request(`/api/group-chats/${groupChatId}/messages?${params.toString()}`);
+  state.groupChatMessages = data.items || [];
+  if (data.group) {
+    state.groupChats = state.groupChats.map((item) => String(item.id) === String(data.group.id) ? data.group : item);
+    if (!state.groupChats.some((item) => String(item.id) === String(data.group.id))) {
+      state.groupChats.unshift(data.group);
+    }
+  }
+  if (markRead) {
+    state.groupChatUnreadCount = Math.max(0, state.groupChats.reduce((sum, item) => sum + Number(item.unread_count || 0), 0));
+  }
+}
+
+async function loadGroupChatInvitations(markRead = false) {
+  if (!state.me?.authenticated || state.me?.is_admin) {
+    state.groupChatInvitations = [];
+    state.groupChatInvitationUnreadCount = 0;
+    return;
+  }
+  const params = new URLSearchParams();
+  if (markRead) params.set("mark_read", "1");
+  const query = params.toString();
+  const data = await request(`/api/group-chat-invitations${query ? `?${query}` : ""}`);
+  state.groupChatInvitations = data.items || [];
+  state.groupChatInvitationUnreadCount = Number(data.unread_count || 0);
+}
+
+async function loadUserMessages(markRead = false) {
+  if (!state.me?.authenticated || state.me?.is_admin) {
+    state.userMessages = [];
+    state.userMessageUnreadCount = 0;
+    return;
+  }
+  const params = new URLSearchParams();
+  if (markRead) params.set("mark_read", "1");
+  params.set("limit", "200");
+  const data = await request(`/api/user-messages?${params.toString()}`);
+  state.userMessages = data.items || [];
+  state.userMessageUnreadCount = Number(data.unread_count || 0);
 }
 
 function renderDashboard() {

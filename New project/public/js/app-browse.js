@@ -216,6 +216,14 @@ async function deleteOwnAvatar() {
   }
 }
 
+function renderCurrentUserRoleBadge() {
+  const role = state.me?.user?.role || currentUserRole();
+  if (window.UserRoleBadges?.renderRoleBadge) {
+    return window.UserRoleBadges.renderRoleBadge(role);
+  }
+  return `<span class="profile-chip">${escapeHtml(role || "Guest")}</span>`;
+}
+
 function renderProfilePage() {
   if (!els.profilePage) return;
 
@@ -244,6 +252,7 @@ function renderProfilePage() {
             <h3>${escapeHtml(state.me.user?.display_name || state.me.user?.username || "管理员")}</h3>
             <p class="profile-hero__meta">账号：${escapeHtml(state.me.user?.username || "-")} · 身份：超级管理员</p>
             <p class="profile-hero__desc">当前账号未绑定游戏成员，因此这里展示的是管理账号概览。</p>
+            <div class="profile-role-badge-row">${renderCurrentUserRoleBadge()}</div>
           </div>
         </article>
         <div class="profile-stat-grid">
@@ -264,6 +273,7 @@ function renderProfilePage() {
     els.profilePage.innerHTML = `
       <article class="empty-card profile-empty-card">
         <h3>${escapeHtml(state.me.user?.display_name || state.me.user?.username || "当前用户")}</h3>
+        <div class="profile-role-badge-row profile-role-badge-row--center">${renderCurrentUserRoleBadge()}</div>
         <p>${escapeHtml(hintText)}</p>
         <div class="profile-empty-actions">
           ${likelyMember ? `<button type="button" class="primary-btn profile-cta-btn" data-profile-action="open-guild">前往我的妖盟</button>` : ""}
@@ -306,7 +316,7 @@ function renderProfilePage() {
           <div class="profile-account-card">
             <span>账号</span>
             <strong>${escapeHtml(state.me.user?.display_name || state.me.user?.username || "-")}</strong>
-            <small>${escapeHtml(currentUserRole())}</small>
+            <div class="profile-role-badge-row">${renderCurrentUserRoleBadge()}</div>
           </div>
           <div class="profile-empty-actions">
             <button type="button" class="ghost-btn" data-profile-action="upload-avatar">${avatarUrl ? "替换头像" : "上传头像"}</button>

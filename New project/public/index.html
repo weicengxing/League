@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link href="https://unpkg.com/@wangeditor/editor@latest/dist/css/style.css" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20260330b">
+  <link rel="stylesheet" href="/styles.css?v=20260330c">
 </head>
 <body>
   <div class="board-page">
@@ -21,6 +21,9 @@
         <button id="roleApplyBtn" type="button" class="ghost-btn hidden">申请盟主权限</button>
         <button id="roleRequestBtn" type="button" class="ghost-btn hidden">申请列表</button>
         <button id="certRequestBtn" type="button" class="ghost-btn hidden">认证申请</button>
+        <button id="groupChatBtn" type="button" class="ghost-btn hidden">群聊<span id="groupChatBadge" class="btn-badge hidden">0</span></button>
+        <button id="groupChatInvitationBtn" type="button" class="ghost-btn hidden">入群邀请<span id="groupChatInvitationBadge" class="btn-badge hidden">0</span></button>
+        <button id="userMessageBtn" type="button" class="ghost-btn hidden">留言<span id="userMessageBadge" class="btn-badge hidden">0</span></button>
         <button id="identitySwapBtn" type="button" class="ghost-btn hidden">交换身份</button>
         <button id="identitySwapRequestBtn" type="button" class="ghost-btn hidden">交换申请</button>
         <button id="dbAdminBtn" type="button" class="ghost-btn hidden">数据库管理</button>
@@ -364,20 +367,43 @@
 
   <div id="guildEditModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="guild-edit"></div>
-    <div class="modal__dialog">
+    <div class="modal__dialog modal__dialog--admin-edit">
       <div class="modal__head">
-        <h3 id="guildEditTitle">编辑妖盟</h3>
+        <div class="modal__title-block">
+          <p class="modal__eyebrow">Guild Console</p>
+          <h3 id="guildEditTitle">编辑妖盟</h3>
+        </div>
         <button type="button" class="ghost-btn" data-close-modal="guild-edit">关闭</button>
       </div>
-      <form id="guildEditForm" class="grid-form modal-form">
+      <form id="guildEditForm" class="grid-form modal-form modal-form--admin-edit">
         <input id="guildEditKey" type="hidden">
         <input id="guildEditLeaderId" type="hidden">
-        <label><span>联盟</span><input id="guildEditAlliance" type="text"></label>
-        <label><span>编号</span><input id="guildEditCode" type="text"></label>
-        <label><span>字号</span><input id="guildEditPrefix" type="text"></label>
-        <label><span>总战力</span><input id="guildEditPower" type="text"></label>
-        <label><span>妖盟名称</span><input id="guildEditName" type="text"></label>
-        <label><span>盟主昵称</span><input id="guildEditLeader" type="text"></label>
+        <section class="admin-edit-card admin-edit-card--summary full">
+          <span class="admin-edit-card__eyebrow">妖盟信息总览</span>
+          <p class="admin-edit-card__text">这里可以维护妖盟名称、盟主昵称和展示战力；编号与字号会保留原始标识，避免误改基础归属。</p>
+        </section>
+        <section class="admin-edit-section full">
+          <div class="admin-edit-section__head">
+            <h4>基础归属</h4>
+            <p>用于确认这支妖盟当前属于哪个联盟，以及它的固定识别信息。</p>
+          </div>
+          <div class="admin-edit-grid admin-edit-grid--compact">
+            <label class="admin-edit-field admin-edit-field--readonly"><span>联盟</span><input id="guildEditAlliance" type="text"></label>
+            <label class="admin-edit-field admin-edit-field--readonly"><span>编号</span><input id="guildEditCode" type="text"></label>
+            <label class="admin-edit-field admin-edit-field--readonly"><span>字号</span><input id="guildEditPrefix" type="text"></label>
+          </div>
+        </section>
+        <section class="admin-edit-section full">
+          <div class="admin-edit-section__head">
+            <h4>可编辑内容</h4>
+            <p>调整玩家看到的主展示信息，适合日常维护和修正录入。</p>
+          </div>
+          <div class="admin-edit-grid">
+            <label class="admin-edit-field"><span>总战力</span><input id="guildEditPower" type="text"></label>
+            <label class="admin-edit-field"><span>妖盟名称</span><input id="guildEditName" type="text"></label>
+            <label class="admin-edit-field admin-edit-field--accent full"><span>盟主昵称</span><input id="guildEditLeader" type="text"></label>
+          </div>
+        </section>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-close-modal="guild-edit">取消</button>
           <button type="submit" class="primary-btn">保存修改</button>
@@ -418,24 +444,47 @@
 
   <div id="memberEditModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="member-edit"></div>
-    <div class="modal__dialog">
+    <div class="modal__dialog modal__dialog--admin-edit modal__dialog--member-edit">
       <div class="modal__head">
-        <h3 id="memberEditTitle">编辑成员</h3>
+        <div class="modal__title-block">
+          <p class="modal__eyebrow">Member Console</p>
+          <h3 id="memberEditTitle">编辑成员</h3>
+        </div>
         <button type="button" class="ghost-btn" data-close-modal="member-edit">关闭</button>
       </div>
-      <form id="memberEditForm" class="grid-form modal-form">
+      <form id="memberEditForm" class="grid-form modal-form modal-form--admin-edit">
         <input id="memberEditId" type="hidden">
         <input id="memberEditGuildKey" type="hidden">
-        <label><span>联盟名称</span><input id="memberEditAlliance" type="text" readonly></label>
-        <label><span>所属妖盟</span><input id="memberEditGuildDisplay" type="text" readonly></label>
-        <label><span>成员昵称</span><input id="memberEditName" type="text"></label>
-        <label><span>等级</span><input id="memberEditRole" type="text" placeholder="例如 1200级"></label>
-        <label><span>境界</span><input id="memberEditRealm" type="text"></label>
-        <label><span>战力</span><input id="memberEditPower" type="text"></label>
-        <label><span>敏捷</span><input id="memberEditSpeed" type="text"></label>
-        <label><span>灵兽</span><input id="memberEditPet" type="text"></label>
-        <label><span>增伤</span><input id="memberEditBonusDamage" type="text"></label>
-        <label><span>减伤</span><input id="memberEditDamageReduction" type="text"></label>
+        <section class="admin-edit-card admin-edit-card--summary full">
+          <span class="admin-edit-card__eyebrow">成员资料维护</span>
+          <p class="admin-edit-card__text">在这里集中维护成员的归属、战斗属性和展示资料，方便盟主快速校对整队数据。</p>
+        </section>
+        <section class="admin-edit-section full">
+          <div class="admin-edit-section__head">
+            <h4>归属信息</h4>
+            <p>这部分用于确认成员归属，不建议在这里频繁变更。</p>
+          </div>
+          <div class="admin-edit-grid admin-edit-grid--compact">
+            <label class="admin-edit-field admin-edit-field--readonly"><span>联盟名称</span><input id="memberEditAlliance" type="text" readonly></label>
+            <label class="admin-edit-field admin-edit-field--readonly"><span>所属妖盟</span><input id="memberEditGuildDisplay" type="text" readonly></label>
+            <label class="admin-edit-field admin-edit-field--accent"><span>成员昵称</span><input id="memberEditName" type="text"></label>
+          </div>
+        </section>
+        <section class="admin-edit-section full">
+          <div class="admin-edit-section__head">
+            <h4>战斗面板</h4>
+            <p>核心数值单独分组，方便连续录入和对比。</p>
+          </div>
+          <div class="admin-edit-grid admin-edit-grid--stats">
+            <label class="admin-edit-field"><span>等级</span><input id="memberEditRole" type="text" placeholder="例如 1200级"></label>
+            <label class="admin-edit-field"><span>境界</span><input id="memberEditRealm" type="text"></label>
+            <label class="admin-edit-field"><span>战力</span><input id="memberEditPower" type="text"></label>
+            <label class="admin-edit-field"><span>敏捷</span><input id="memberEditSpeed" type="text"></label>
+            <label class="admin-edit-field"><span>灵兽</span><input id="memberEditPet" type="text"></label>
+            <label class="admin-edit-field"><span>增伤</span><input id="memberEditBonusDamage" type="text"></label>
+            <label class="admin-edit-field"><span>减伤</span><input id="memberEditDamageReduction" type="text"></label>
+          </div>
+        </section>
         <textarea id="memberEditNote" class="hidden"></textarea>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-close-modal="member-edit">取消</button>
@@ -460,23 +509,32 @@
 
   <div id="roleApplyModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="role-apply"></div>
-    <div class="modal__dialog">
+    <div class="modal__dialog modal__dialog--role-apply">
       <div class="modal__head">
-        <h3>申请盟主权限</h3>
+        <div class="modal__title-block">
+          <p class="modal__eyebrow">Role Request</p>
+          <h3>申请盟主权限</h3>
+        </div>
         <button type="button" class="ghost-btn" data-close-modal="role-apply">关闭</button>
       </div>
-      <form id="roleApplyForm" class="stack-form modal-form">
-        <label>
-          <span>申请类型</span>
-          <select id="roleApplyType">
-            <option value="guild">申请妖盟盟主</option>
-            <option value="alliance">申请联盟盟主</option>
-          </select>
-        </label>
-        <label>
-          <span id="roleApplyTargetLabel">目标妖盟</span>
-          <select id="roleApplyAlliance"></select>
-        </label>
+      <form id="roleApplyForm" class="stack-form modal-form modal-form--role-apply">
+        <section class="admin-edit-card admin-edit-card--summary">
+          <span class="admin-edit-card__eyebrow">权限申请说明</span>
+          <p class="admin-edit-card__text">先选择你想申请的权限类型，再指定目标联盟或妖盟。提交后会进入审核列表，等待对应管理者确认。</p>
+        </section>
+        <div class="role-apply-grid">
+          <label class="admin-edit-field select-shell">
+            <span>申请类型</span>
+            <select id="roleApplyType">
+              <option value="guild">申请妖盟盟主</option>
+              <option value="alliance">申请联盟盟主</option>
+            </select>
+          </label>
+          <label class="admin-edit-field select-shell">
+            <span id="roleApplyTargetLabel">目标妖盟</span>
+            <select id="roleApplyAlliance"></select>
+          </label>
+        </div>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-close-modal="role-apply">取消</button>
           <button type="submit" class="primary-btn">提交申请</button>
@@ -554,25 +612,37 @@
 
   <div id="identitySwapModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="identity-swap"></div>
-    <div class="modal__dialog">
+    <div class="modal__dialog modal__dialog--identity-swap">
       <div class="modal__head">
-        <h3>交换身份</h3>
+        <div class="modal__title-block">
+          <p class="modal__eyebrow">Identity Exchange</p>
+          <h3>交换身份</h3>
+        </div>
         <button type="button" class="ghost-btn" data-close-modal="identity-swap">关闭</button>
       </div>
-      <form id="identitySwapForm" class="stack-form modal-form">
-        <label>
-          <span>联盟</span>
-          <select id="identitySwapAlliance"></select>
-        </label>
-        <label>
-          <span>妖盟</span>
-          <select id="identitySwapGuild"></select>
-        </label>
-        <label>
-          <span>已认证成员</span>
-          <select id="identitySwapMember"></select>
-        </label>
-        <label>
+      <form id="identitySwapForm" class="stack-form modal-form modal-form--identity-swap">
+        <section class="identity-swap-hero">
+          <div>
+            <span class="identity-swap-hero__eyebrow">安全交换流程</span>
+            <h4>先选目标身份，再补充申请说明</h4>
+          </div>
+          <p>只支持与已认证成员发起交换。提交后会等待对方确认，期间不会直接覆盖当前绑定。</p>
+        </section>
+        <section class="identity-swap-grid">
+          <label class="admin-edit-field identity-swap-field select-shell">
+            <span>联盟</span>
+            <select id="identitySwapAlliance"></select>
+          </label>
+          <label class="admin-edit-field identity-swap-field select-shell">
+            <span>妖盟</span>
+            <select id="identitySwapGuild"></select>
+          </label>
+          <label class="admin-edit-field identity-swap-field identity-swap-field--member select-shell">
+            <span>已认证成员</span>
+            <select id="identitySwapMember"></select>
+          </label>
+        </section>
+        <label class="admin-edit-field identity-swap-field identity-swap-field--message">
           <span>交换留言</span>
           <textarea id="identitySwapMessage" rows="4" placeholder="可以说明为什么想交换身份"></textarea>
         </label>
@@ -593,6 +663,75 @@
         <button type="button" class="ghost-btn" data-close-modal="identity-swap-request">关闭</button>
       </div>
       <div id="identitySwapRequestList" class="modal__body"></div>
+    </div>
+  </div>
+
+  <div id="userMessageModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="user-message"></div>
+    <div class="modal__dialog modal__dialog--wide">
+      <div class="modal__head">
+        <h3>用户留言</h3>
+        <button type="button" class="ghost-btn" data-close-modal="user-message">关闭</button>
+      </div>
+      <div class="modal__body user-message-modal">
+        <form id="userMessageForm" class="stack-form modal-form user-message-form">
+          <div class="user-message-form__row">
+            <label class="admin-edit-field select-shell">
+              <span>留言对象</span>
+              <select id="userMessageTarget"></select>
+            </label>
+          </div>
+          <label class="admin-edit-field">
+            <span>留言内容</span>
+            <textarea id="userMessageInput" rows="4" placeholder="写点想说的话，发送后对方会实时收到提醒"></textarea>
+          </label>
+          <div class="modal-actions">
+            <button type="submit" class="primary-btn">发送留言</button>
+          </div>
+        </form>
+        <div id="userMessageList" class="user-message-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="groupChatModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="group-chat"></div>
+    <div class="modal__dialog modal__dialog--wide">
+      <div class="modal__head">
+        <div class="modal__title-block">
+          <p class="modal__eyebrow">Group Chat</p>
+          <h3>群聊中心</h3>
+        </div>
+        <button type="button" class="ghost-btn" data-close-modal="group-chat">关闭</button>
+      </div>
+      <div class="group-chat-shell">
+        <form id="groupChatCreateForm" class="group-chat-create-form">
+          <label class="group-chat-create-form__field">
+            <span class="group-chat-create-form__label">创建群聊</span>
+            <input id="groupChatNameInput" type="text" maxlength="40" placeholder="输入群聊名称">
+          </label>
+          <button type="submit" class="primary-btn group-chat-create-form__submit">建群</button>
+          <div id="groupChatCreateHint" class="group-chat-create-hint">加载中...</div>
+        </form>
+        <div id="groupChatList" class="group-chat-list"></div>
+        <section id="groupChatDetail" class="group-chat-detail">
+          <article class="empty-card">请选择一个群聊查看详情。</article>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="groupChatInvitationModal" class="modal hidden">
+    <div class="modal__backdrop" data-close-modal="group-chat-invitation"></div>
+    <div class="modal__dialog modal__dialog--wide">
+      <div class="modal__head">
+        <div class="modal__title-block">
+          <p class="modal__eyebrow">Invitations</p>
+          <h3>入群邀请</h3>
+        </div>
+        <button type="button" class="ghost-btn" data-close-modal="group-chat-invitation">关闭</button>
+      </div>
+      <div id="groupChatInvitationList" class="modal__body"></div>
     </div>
   </div>
 
@@ -654,10 +793,11 @@
   </div>
 
   <script src="https://unpkg.com/@wangeditor/editor@latest/dist/index.js"></script>
-  <script src="/js/app-core.js?v=20260330b"></script>
+  <script src="/js/user-role-badges.js?v=20260331a"></script>
+  <script src="/js/app-core.js?v=20260330c"></script>
   <script src="/js/app-session.js?v=20260330b"></script>
   <script src="/js/app-browse.js?v=20260329b"></script>
-  <script src="/js/app-feeds-auth.js?v=20260330b"></script>
+  <script src="/js/app-feeds-auth.js?v=20260330c"></script>
   <script src="/js/app-admin.js?v=20260329b"></script>
   <script src="/js/app-admin-actions.js?v=20260330b"></script>
   <script src="/js/app-utils.js?v=20260329b"></script>

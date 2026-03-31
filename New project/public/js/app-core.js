@@ -9,6 +9,8 @@ let melonRichEditor = null;
 let pendingDangerConfirmResolver = null;
 let noticeModalTimer = null;
 let noticeModalConfirmHandler = null;
+const customSelectRegistry = new Map();
+let customSelectEventsBound = false;
 
 function connectMelonWebSocket() {
   if (melonWs && melonWs.readyState === WebSocket.OPEN) {
@@ -147,6 +149,26 @@ function connectAuthWebSocket() {
         }
         if (data.type === "identity_swap_request_reviewed") {
           handleIdentitySwapRequestReviewed(data);
+          return;
+        }
+        if (data.type === "user_message_created") {
+          handleUserMessageCreated(data);
+          return;
+        }
+        if (data.type === "group_chat_message_created") {
+          handleGroupChatMessageCreated(data);
+          return;
+        }
+        if (data.type === "group_chat_invitation_created") {
+          handleGroupChatInvitationCreated(data);
+          return;
+        }
+        if (data.type === "group_chat_invitation_reviewed") {
+          handleGroupChatInvitationReviewed(data);
+          return;
+        }
+        if (data.type === "group_chat_member_updated" || data.type === "group_chat_member_removed" || data.type === "group_chat_deleted") {
+          handleGroupChatUpdated(data);
         }
       } catch (error) {
         console.error("[Auth WS] Parse error:", error);
@@ -268,6 +290,94 @@ async function handleIdentitySwapRequestReviewed(data) {
   toast(`身份交换申请已被处理：${statusLabel}`);
 }
 
+async function handleUserMessageCreated(data) {
+  try {
+    const shouldMarkRead = !els.userMessageModal?.classList.contains("hidden");
+    await loadUserMessages(shouldMarkRead);
+    renderAuth();
+    if (shouldMarkRead) {
+      renderUserMessageList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh user messages:", error);
+  }
+  const sender = data?.from_name || "有用户";
+  const preview = data?.message_preview ? `：${data.message_preview}` : "";
+  toast(`收到新留言，来自 ${sender}${preview}`);
+}
+
+async function handleGroupChatMessageCreated(data) {
+  try {
+    await loadGroupChats();
+    const activeGroupId = String(state.selectedGroupChatId || "");
+    const incomingGroupId = String(data?.group_chat_id || "");
+    const shouldRefreshMessages = !els.groupChatModal?.classList.contains("hidden") && activeGroupId && activeGroupId === incomingGroupId;
+    if (shouldRefreshMessages) {
+      await loadGroupChatMessages(activeGroupId, true);
+      renderGroupChatDetail();
+    }
+    renderAuth();
+    if (!els.groupChatModal?.classList.contains("hidden")) {
+      renderGroupChatList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh group chats:", error);
+  }
+  const sender = data?.from_name || "有用户";
+  const preview = data?.message_preview ? `：${data.message_preview}` : "";
+  toast(`群聊新消息，来自 ${sender}${preview}`);
+}
+
+async function handleGroupChatInvitationCreated(data) {
+  try {
+    await Promise.all([loadGroupChatInvitations(), loadGroupChats()]);
+    renderAuth();
+    if (!els.groupChatInvitationModal?.classList.contains("hidden")) {
+      renderGroupChatInvitationList();
+    }
+    if (!els.groupChatModal?.classList.contains("hidden")) {
+      renderGroupChatList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh group chat invitations:", error);
+  }
+  toast(`收到入群邀请：${data?.group_name || "新的群聊"}`);
+}
+
+async function handleGroupChatInvitationReviewed(data) {
+  try {
+    await Promise.all([loadGroupChatInvitations(), loadGroupChats()]);
+    renderAuth();
+    if (!els.groupChatInvitationModal?.classList.contains("hidden")) {
+      renderGroupChatInvitationList();
+    }
+    if (!els.groupChatModal?.classList.contains("hidden")) {
+      renderGroupChatList();
+      renderGroupChatDetail();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh reviewed group chat invitation:", error);
+  }
+  const statusLabel = data?.status === "accepted" ? "已同意" : "已拒绝";
+  toast(`入群邀请${statusLabel}`);
+}
+
+async function handleGroupChatUpdated() {
+  try {
+    await Promise.all([loadGroupChats(), loadGroupChatInvitations()]);
+    renderAuth();
+    if (!els.groupChatModal?.classList.contains("hidden")) {
+      renderGroupChatList();
+      renderGroupChatDetail();
+    }
+    if (!els.groupChatInvitationModal?.classList.contains("hidden")) {
+      renderGroupChatInvitationList();
+    }
+  } catch (error) {
+    console.error("[Auth WS] Failed to refresh group chat state:", error);
+  }
+}
+
 const state = {
   dashboard: null,
   members: [],
@@ -282,6 +392,18 @@ const state = {
   identitySwapOptions: [],
   identitySwapRequests: [],
   identitySwapUnreadCount: 0,
+  groupChats: [],
+  groupChatUnreadCount: 0,
+  groupChatInvitations: [],
+  groupChatInvitationUnreadCount: 0,
+  groupChatMessages: [],
+  selectedGroupChatId: null,
+  groupChatCreateLimit: 0,
+  groupChatCreatedCount: 0,
+  groupChatRoleKind: "",
+  userMessageOptions: [],
+  userMessages: [],
+  userMessageUnreadCount: 0,
   selectedMemberCertId: null,
   currentView: "guilds",
   selectedGuild: null,
@@ -335,6 +457,9 @@ const els = {
   sortSelect: document.querySelector("#sortSelect"),
   roleRequestBtn: document.querySelector("#roleRequestBtn"),
   certRequestBtn: document.querySelector("#certRequestBtn"),
+  groupChatBtn: document.querySelector("#groupChatBtn"),
+  groupChatInvitationBtn: document.querySelector("#groupChatInvitationBtn"),
+  userMessageBtn: document.querySelector("#userMessageBtn"),
   identitySwapBtn: document.querySelector("#identitySwapBtn"),
   identitySwapRequestBtn: document.querySelector("#identitySwapRequestBtn"),
   roleApplyBtn: document.querySelector("#roleApplyBtn"),
@@ -347,6 +472,19 @@ const els = {
   roleApplyAlliance: document.querySelector("#roleApplyAlliance"),
   certRequestModal: document.querySelector("#certRequestModal"),
   certRequestList: document.querySelector("#certRequestList"),
+  groupChatModal: document.querySelector("#groupChatModal"),
+  groupChatCreateForm: document.querySelector("#groupChatCreateForm"),
+  groupChatNameInput: document.querySelector("#groupChatNameInput"),
+  groupChatCreateHint: document.querySelector("#groupChatCreateHint"),
+  groupChatList: document.querySelector("#groupChatList"),
+  groupChatDetail: document.querySelector("#groupChatDetail"),
+  groupChatInvitationModal: document.querySelector("#groupChatInvitationModal"),
+  groupChatInvitationList: document.querySelector("#groupChatInvitationList"),
+  userMessageModal: document.querySelector("#userMessageModal"),
+  userMessageForm: document.querySelector("#userMessageForm"),
+  userMessageTarget: document.querySelector("#userMessageTarget"),
+  userMessageInput: document.querySelector("#userMessageInput"),
+  userMessageList: document.querySelector("#userMessageList"),
   identitySwapModal: document.querySelector("#identitySwapModal"),
   identitySwapForm: document.querySelector("#identitySwapModal #identitySwapForm"),
   identitySwapAlliance: document.querySelector("#identitySwapModal #identitySwapAlliance"),
@@ -456,9 +594,209 @@ setupUserProfileUI();
 setupGuildEditUI();
 setupMemberEditUI();
 ensureRoleUi();
+setupCustomModalSelects();
 setupRichTextEditors();
 bindEvents();
 boot();
+
+function getCustomModalSelectTargets() {
+  return [
+    els.roleApplyType,
+    els.roleApplyAlliance,
+    document.querySelector("#groupChatInviteTarget"),
+    els.userMessageTarget,
+    els.identitySwapAlliance,
+    els.identitySwapGuild,
+    els.identitySwapMember,
+  ].filter(Boolean);
+}
+
+function setupCustomModalSelects() {
+  for (const select of getCustomModalSelectTargets()) {
+    enhanceCustomSelect(select);
+  }
+  if (customSelectEventsBound) return;
+  customSelectEventsBound = true;
+  document.addEventListener("click", handleCustomSelectOutsideClick);
+  document.addEventListener("keydown", handleCustomSelectKeydown);
+  window.refreshCustomSelectUI = refreshCustomSelectUI;
+}
+
+function enhanceCustomSelect(select) {
+  if (!(select instanceof HTMLSelectElement)) return null;
+  if (customSelectRegistry.has(select)) {
+    syncCustomSelect(select);
+    return customSelectRegistry.get(select);
+  }
+  const shell = select.closest(".select-shell");
+  if (!(shell instanceof HTMLElement)) return null;
+
+  shell.classList.add("select-shell--customized");
+
+  const customRoot = document.createElement("div");
+  customRoot.className = "custom-select";
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "custom-select__trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+
+  const triggerLabel = document.createElement("span");
+  triggerLabel.className = "custom-select__label";
+  trigger.appendChild(triggerLabel);
+
+  const menu = document.createElement("div");
+  menu.className = "custom-select__menu hidden";
+
+  const list = document.createElement("div");
+  list.className = "custom-select__list";
+  list.setAttribute("role", "listbox");
+  menu.appendChild(list);
+
+  customRoot.appendChild(trigger);
+  customRoot.appendChild(menu);
+  shell.appendChild(customRoot);
+
+  const instance = { select, shell, customRoot, trigger, triggerLabel, menu, list };
+  customSelectRegistry.set(select, instance);
+
+  trigger.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleCustomSelect(select);
+  });
+
+  list.addEventListener("click", (event) => {
+    const optionButton = event.target.closest("[data-custom-select-value]");
+    if (!(optionButton instanceof HTMLButtonElement)) return;
+    const nextValue = optionButton.dataset.customSelectValue ?? "";
+    if (select.value !== nextValue) {
+      select.value = nextValue;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    syncCustomSelect(select);
+    closeCustomSelect(select);
+  });
+
+  select.addEventListener("change", () => syncCustomSelect(select));
+
+  const observer = new MutationObserver(() => syncCustomSelect(select));
+  observer.observe(select, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["disabled", "label"],
+  });
+  instance.observer = observer;
+
+  syncCustomSelect(select);
+  return instance;
+}
+
+function syncCustomSelect(select) {
+  const instance = customSelectRegistry.get(select);
+  if (!instance) return;
+  const { trigger, triggerLabel, list, menu } = instance;
+  const selectedOption = select.options[select.selectedIndex] || select.options[0] || null;
+  if (selectedOption?.dataset?.role && selectedOption?.dataset?.displayLabel && window.UserRoleBadges?.renderRoleBadge) {
+    triggerLabel.innerHTML = `
+      ${window.UserRoleBadges.renderRoleBadge(selectedOption.dataset.role)}
+      <span class="user-role-option__text">${escapeHtml(selectedOption.dataset.displayLabel)}</span>
+    `;
+    triggerLabel.classList.add("user-role-option");
+  } else {
+    triggerLabel.textContent = selectedOption?.textContent?.trim() || "请选择";
+    triggerLabel.classList.remove("user-role-option");
+  }
+  trigger.disabled = select.disabled;
+  trigger.classList.toggle("is-placeholder", !select.value);
+  trigger.classList.toggle("is-disabled", Boolean(select.disabled));
+
+  list.innerHTML = "";
+  [...select.options].forEach((option, index) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "custom-select__option";
+    item.dataset.customSelectValue = option.value;
+    if (option.dataset?.role && option.dataset?.displayLabel && window.UserRoleBadges?.renderRoleBadge) {
+      item.innerHTML = `
+        <span class="user-role-option">
+          ${window.UserRoleBadges.renderRoleBadge(option.dataset.role)}
+          <span class="user-role-option__text">${escapeHtml(option.dataset.displayLabel)}</span>
+        </span>
+      `;
+      item.classList.add("custom-select__option--role");
+    } else {
+      item.textContent = option.textContent || "";
+      item.classList.remove("custom-select__option--role");
+    }
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", option.selected ? "true" : "false");
+    if (option.disabled) {
+      item.disabled = true;
+      item.classList.add("is-disabled");
+    }
+    if (option.value === select.value) {
+      item.classList.add("is-selected");
+      if (!option.disabled && !menu.classList.contains("hidden")) {
+        queueMicrotask(() => item.scrollIntoView({ block: "nearest" }));
+      }
+    }
+    if (!option.value && index === 0) {
+      item.classList.add("is-placeholder");
+    }
+    list.appendChild(item);
+  });
+}
+
+function toggleCustomSelect(select) {
+  const instance = customSelectRegistry.get(select);
+  if (!instance || instance.trigger.disabled) return;
+  const willOpen = instance.menu.classList.contains("hidden");
+  closeAllCustomSelects(select);
+  if (!willOpen) return;
+  instance.menu.classList.remove("hidden");
+  instance.trigger.setAttribute("aria-expanded", "true");
+  instance.shell.classList.add("is-open");
+  syncCustomSelect(select);
+}
+
+function closeCustomSelect(select) {
+  const instance = customSelectRegistry.get(select);
+  if (!instance) return;
+  instance.menu.classList.add("hidden");
+  instance.trigger.setAttribute("aria-expanded", "false");
+  instance.shell.classList.remove("is-open");
+}
+
+function closeAllCustomSelects(exceptSelect = null) {
+  for (const [select] of customSelectRegistry) {
+    if (exceptSelect && select === exceptSelect) continue;
+    closeCustomSelect(select);
+  }
+}
+
+function handleCustomSelectOutsideClick(event) {
+  const target = event.target;
+  if (target instanceof Element && target.closest(".custom-select")) return;
+  closeAllCustomSelects();
+}
+
+function handleCustomSelectKeydown(event) {
+  if (event.key === "Escape") {
+    closeAllCustomSelects();
+  }
+}
+
+function refreshCustomSelectUI(targets = null) {
+  const source = Array.isArray(targets) ? targets : getCustomModalSelectTargets();
+  for (const select of source) {
+    if (!(select instanceof HTMLSelectElement)) continue;
+    enhanceCustomSelect(select);
+    syncCustomSelect(select);
+  }
+}
 
 function ensureRoleUi() {
   if (!document.querySelector("#roleApplyBtn")) {
@@ -471,6 +809,9 @@ function ensureRoleUi() {
       </button>
       <button id="certRequestBtn" type="button" class="ghost-btn action-btn--approve">
         认证申请<span id="certRequestBadge" class="btn-badge hidden">0</span>
+      </button>
+      <button id="userMessageBtn" type="button" class="ghost-btn">
+        留言<span id="userMessageBadge" class="btn-badge hidden">0</span>
       </button>
       <button id="identitySwapBtn" type="button" class="ghost-btn">交换身份</button>
       <button id="identitySwapRequestBtn" type="button" class="ghost-btn">
@@ -487,6 +828,10 @@ function ensureRoleUi() {
   const certRequestBtn = document.querySelector("#certRequestBtn");
   if (certRequestBtn && !certRequestBtn.querySelector("#certRequestBadge")) {
     certRequestBtn.insertAdjacentHTML("beforeend", `<span id="certRequestBadge" class="btn-badge hidden">0</span>`);
+  }
+  const userMessageBtn = document.querySelector("#userMessageBtn");
+  if (userMessageBtn && !userMessageBtn.querySelector("#userMessageBadge")) {
+    userMessageBtn.insertAdjacentHTML("beforeend", `<span id="userMessageBadge" class="btn-badge hidden">0</span>`);
   }
   const identitySwapRequestBtn = document.querySelector("#identitySwapRequestBtn");
   if (identitySwapRequestBtn && !identitySwapRequestBtn.querySelector("#identitySwapRequestBadge")) {
@@ -557,11 +902,23 @@ function ensureRoleUi() {
   els.roleApplyBtn = document.querySelector("#roleApplyBtn");
   els.roleRequestBtn = document.querySelector("#roleRequestBtn");
   els.certRequestBtn = document.querySelector("#certRequestBtn");
+  els.groupChatBtn = document.querySelector("#groupChatBtn");
+  els.groupChatInvitationBtn = document.querySelector("#groupChatInvitationBtn");
+  els.userMessageBtn = document.querySelector("#userMessageBtn");
   els.identitySwapBtn = document.querySelector("#identitySwapBtn");
   els.identitySwapRequestBtn = document.querySelector("#identitySwapRequestBtn");
   els.roleApplyModal = document.querySelector("#roleApplyModal");
   els.roleRequestModal = document.querySelector("#roleRequestModal");
   els.certRequestModal = document.querySelector("#certRequestModal");
+  els.groupChatModal = document.querySelector("#groupChatModal");
+  els.groupChatCreateForm = document.querySelector("#groupChatCreateForm");
+  els.groupChatNameInput = document.querySelector("#groupChatNameInput");
+  els.groupChatCreateHint = document.querySelector("#groupChatCreateHint");
+  els.groupChatList = document.querySelector("#groupChatList");
+  els.groupChatDetail = document.querySelector("#groupChatDetail");
+  els.groupChatInvitationModal = document.querySelector("#groupChatInvitationModal");
+  els.groupChatInvitationList = document.querySelector("#groupChatInvitationList");
+  els.userMessageModal = document.querySelector("#userMessageModal");
   els.identitySwapModal = document.querySelector("#identitySwapModal");
   els.identitySwapRequestModal = document.querySelector("#identitySwapRequestModal");
   els.roleApplyForm = document.querySelector("#roleApplyForm");
@@ -570,6 +927,10 @@ function ensureRoleUi() {
   els.roleApplyAlliance = document.querySelector("#roleApplyAlliance");
   els.roleRequestList = document.querySelector("#roleRequestList");
   els.certRequestList = document.querySelector("#certRequestList");
+  els.userMessageForm = document.querySelector("#userMessageForm");
+  els.userMessageTarget = document.querySelector("#userMessageTarget");
+  els.userMessageInput = document.querySelector("#userMessageInput");
+  els.userMessageList = document.querySelector("#userMessageList");
   els.identitySwapForm = document.querySelector("#identitySwapModal #identitySwapForm");
   els.identitySwapAlliance = document.querySelector("#identitySwapModal #identitySwapAlliance");
   els.identitySwapGuild = document.querySelector("#identitySwapModal #identitySwapGuild");
@@ -771,6 +1132,11 @@ function bindEvents() {
   els.roleApplyType?.addEventListener("change", syncRoleApplyTargetOptions);
   els.roleRequestBtn?.addEventListener("click", openRoleRequestModal);
   els.certRequestBtn?.addEventListener("click", () => openCertRequestModal());
+  els.groupChatBtn?.addEventListener("click", openGroupChatModal);
+  els.groupChatInvitationBtn?.addEventListener("click", openGroupChatInvitationModal);
+  els.groupChatCreateForm?.addEventListener("submit", submitGroupChatCreateForm);
+  els.userMessageBtn?.addEventListener("click", openUserMessageModal);
+  els.userMessageForm?.addEventListener("submit", submitUserMessageForm);
   els.identitySwapBtn?.addEventListener("click", openIdentitySwapModal);
   els.identitySwapRequestBtn?.addEventListener("click", openIdentitySwapRequestModal);
   els.identitySwapForm?.addEventListener("submit", submitIdentitySwapForm);
@@ -837,6 +1203,27 @@ function bindEvents() {
     const identitySwapAction = event.target.closest("[data-identity-swap-action]");
     if (!(identitySwapAction instanceof HTMLElement)) return;
     await reviewIdentitySwapRequest(identitySwapAction.dataset.id, identitySwapAction.dataset.identitySwapAction);
+  });
+  document.addEventListener("click", async (event) => {
+    const groupOpen = event.target.closest("[data-open-group-chat]");
+    if (groupOpen instanceof HTMLElement) {
+      await selectGroupChat(groupOpen.dataset.openGroupChat);
+      return;
+    }
+    const groupInviteAction = event.target.closest("[data-group-chat-invite-action]");
+    if (groupInviteAction instanceof HTMLElement) {
+      await reviewGroupChatInvitation(groupInviteAction.dataset.id, groupInviteAction.dataset.groupChatInviteAction);
+      return;
+    }
+    const groupMemberAction = event.target.closest("[data-group-member-action]");
+    if (groupMemberAction instanceof HTMLElement) {
+      await handleGroupMemberAction(groupMemberAction);
+      return;
+    }
+    const groupOwnerAction = event.target.closest("[data-group-owner-action]");
+    if (groupOwnerAction instanceof HTMLElement) {
+      await handleGroupOwnerAction(groupOwnerAction);
+    }
   });
   
   // 创建隐藏的文件输入框用于 Excel 导入

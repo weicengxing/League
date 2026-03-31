@@ -46,7 +46,8 @@ function isCurrentUserLinkedToMember(member) {
 }
 
 function canBecomeMemberDirectly(member) {
-  return currentUserRole() === "AllianceAdmin" && canReviewMemberCert(member);
+  const role = currentUserRole();
+  return (role === "AllianceAdmin" || role === "SuperAdmin") && canReviewMemberCert(member);
 }
 
 function renderMemberVerificationState(member) {
@@ -105,6 +106,512 @@ function closeIdentitySwapModal() {
 
 function closeIdentitySwapRequestModal() {
   els.identitySwapRequestModal?.classList.add("hidden");
+}
+
+function closeUserMessageModal() {
+  els.userMessageModal?.classList.add("hidden");
+}
+
+function closeGroupChatModal() {
+  els.groupChatModal?.classList.add("hidden");
+}
+
+function closeGroupChatInvitationModal() {
+  els.groupChatInvitationModal?.classList.add("hidden");
+}
+
+function getGroupChatCreateLimitText() {
+  const limit = state.groupChatCreateLimit;
+  const createdCount = Number(state.groupChatCreatedCount || 0);
+  if (limit == null) {
+    return `当前角色可无限建群，已创建 ${createdCount} 个。`;
+  }
+  if (limit <= 0) {
+    return "当前角色不可建群，但仍可查看收到的群聊邀请。";
+  }
+  return `当前角色最多可创建 ${limit} 个群聊，已创建 ${createdCount} 个。`;
+}
+
+function renderGroupChatCreateHint() {
+  const role = currentUserRole();
+  const roleBadge = window.UserRoleBadges?.renderRoleBadge
+    ? window.UserRoleBadges.renderRoleBadge(role)
+    : `<span>${escapeHtml(role)}</span>`;
+  return `
+    <div class="group-chat-create-hint__badge">${roleBadge}</div>
+    <div class="group-chat-create-hint__body">
+      <strong>当前角色</strong>
+      <p>${escapeHtml(getGroupChatCreateLimitText())}</p>
+    </div>
+  `;
+}
+
+function getUserMessageRoleTag(role) {
+  if (window.UserRoleBadges?.getRoleBadgeMeta) {
+    return window.UserRoleBadges.getRoleBadgeMeta(role);
+  }
+  return { key: "guest", label: "Guest", aura: "流沙访客" };
+}
+
+function renderUserMessageTargetOptions(selectedValue = "") {
+  const items = [...(state.userMessageOptions || [])].sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), "zh-CN"));
+  return [
+    `<option value="">请选择用户</option>`,
+    ...items.map((item) => {
+      const roleTag = getUserMessageRoleTag(item.role);
+      const subtitle = item.subtitle ? ` · ${item.subtitle}` : "";
+      const displayLabel = `${item.label || item.username || `用户#${item.user_id}`}${subtitle}`;
+      return `<option value="${escapeHtml(String(item.user_id))}" data-role-key="${escapeHtml(roleTag.key)}" data-role="${escapeHtml(String(item.role || ""))}" data-display-label="${escapeHtml(displayLabel)}" ${String(item.user_id) === String(selectedValue) ? "selected" : ""}>${escapeHtml(`${roleTag.label} ${displayLabel}`)}</option>`;
+    }),
+  ].join("");
+}
+
+async function openUserMessageModal() {
+  if (!els.userMessageModal || !els.userMessageTarget || !els.userMessageList) return;
+  try {
+    const [optionsData] = await Promise.all([
+      request("/api/user-messages/options"),
+      loadUserMessages(true),
+    ]);
+    state.userMessageOptions = optionsData.items || [];
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  els.userMessageTarget.innerHTML = renderUserMessageTargetOptions(els.userMessageTarget.value || "");
+  window.refreshCustomSelectUI?.([els.userMessageTarget]);
+  renderAuth();
+  renderUserMessageList();
+  els.userMessageModal.classList.remove("hidden");
+}
+
+function renderUserMessageList() {
+  if (!els.userMessageList) return;
+  const items = state.userMessages || [];
+  if (!items.length) {
+    els.userMessageList.innerHTML = `<article class="empty-card">还没有留言记录，快发出第一条吧。</article>`;
+    return;
+  }
+  els.userMessageList.innerHTML = items.map((item) => {
+    const isOutgoing = item.direction === "out";
+    const name = item.counterpart_name || item.counterpart_username || `用户#${item.counterpart_user_id}`;
+    const subtitleParts = [item.counterpart_alliance, item.counterpart_guild, item.counterpart_username].filter(Boolean);
+    const roleBadge = window.UserRoleBadges?.renderRoleBadge
+      ? window.UserRoleBadges.renderRoleBadge(item.counterpart_role || "Guest")
+      : "";
+    const titleContent = isOutgoing
+      ? `<span>${escapeHtml(`发给 ${name}`)}</span>${roleBadge}`
+      : `${roleBadge}<span>${escapeHtml(`${name} 发来的留言`)}</span>`;
+    return `
+      <article class="user-message-card ${isOutgoing ? "is-outgoing" : ""}">
+        <div class="user-message-card__head">
+          <div class="user-message-card__meta">
+            <strong class="user-message-card__title">
+              ${titleContent}
+            </strong>
+            <p>${escapeHtml(subtitleParts.join(" / ") || "普通用户")}</p>
+            <small>${escapeHtml(item.created_at || "-")}</small>
+          </div>
+          <span class="${escapeHtml(isOutgoing || item.is_read ? "member-status member-status--verified" : "member-status member-status--pending")}">${escapeHtml(isOutgoing ? "已发送" : (item.is_read ? "已读" : "未读"))}</span>
+        </div>
+        <p class="user-message-card__body">${escapeHtml(item.message || "")}</p>
+      </article>
+    `;
+  }).join("");
+}
+
+async function submitUserMessageForm(event) {
+  event.preventDefault();
+  const targetUserId = els.userMessageTarget?.value || "";
+  const message = els.userMessageInput?.value.trim() || "";
+  if (!targetUserId) {
+    toast("请选择留言对象");
+    return;
+  }
+  if (!message) {
+    toast("请输入留言内容");
+    return;
+  }
+  try {
+    const result = await request("/api/user-messages", {
+      method: "POST",
+      body: JSON.stringify({ target_user_id: Number(targetUserId), message }),
+    });
+    if (els.userMessageInput) {
+      els.userMessageInput.value = "";
+    }
+    await loadUserMessages();
+    renderAuth();
+    renderUserMessageList();
+    toast(result.message || "留言已发送");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function openGroupChatModal() {
+  if (!els.groupChatModal || !els.groupChatList || !els.groupChatDetail) return;
+  try {
+    await Promise.all([
+      loadGroupChats(),
+      request("/api/user-messages/options").then((data) => {
+        state.userMessageOptions = data.items || [];
+      }),
+    ]);
+    if (state.selectedGroupChatId) {
+      await loadGroupChatMessages(state.selectedGroupChatId, true);
+    }
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  if (els.groupChatCreateHint) {
+    els.groupChatCreateHint.innerHTML = renderGroupChatCreateHint();
+  }
+  renderAuth();
+  renderGroupChatList();
+  renderGroupChatDetail();
+  els.groupChatModal.classList.remove("hidden");
+}
+
+async function openGroupChatInvitationModal() {
+  if (!els.groupChatInvitationModal || !els.groupChatInvitationList) return;
+  try {
+    await loadGroupChatInvitations(true);
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  renderAuth();
+  renderGroupChatInvitationList();
+  els.groupChatInvitationModal.classList.remove("hidden");
+}
+
+function renderGroupChatList() {
+  if (!els.groupChatList) return;
+  if (els.groupChatCreateHint) {
+    els.groupChatCreateHint.innerHTML = renderGroupChatCreateHint();
+  }
+  if (!state.groupChats.length) {
+    els.groupChatList.innerHTML = `<article class="empty-card">你还没有加入任何群聊。</article>`;
+    return;
+  }
+  els.groupChatList.innerHTML = state.groupChats.map((item) => `
+    <article class="group-chat-card ${String(item.id) === String(state.selectedGroupChatId) ? "is-active" : ""}">
+      <button type="button" class="group-chat-card__main" data-open-group-chat="${item.id}">
+        <strong>${escapeHtml(item.name || `群聊#${item.id}`)}</strong>
+        <p>${escapeHtml(`${item.member_count || 0} 人 · ${item.my_member_role === "owner" ? "群主" : "成员"}`)}</p>
+        <small>${escapeHtml(item.last_message_at || item.created_at || "-")}</small>
+        ${item.last_message_preview ? `<span>${escapeHtml(item.last_message_preview)}</span>` : `<span>暂无消息</span>`}
+      </button>
+      ${item.unread_count ? `<span class="btn-badge">${escapeHtml(String(item.unread_count))}</span>` : ""}
+    </article>
+  `).join("");
+}
+
+function renderGroupChatInviteOptions(groupItem) {
+  const memberIds = new Set((groupItem?.members || []).map((member) => String(member.user_id)));
+  const options = (state.userMessageOptions || [])
+    .filter((item) => !memberIds.has(String(item.user_id)))
+    .sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), "zh-CN"));
+  return [
+    `<option value="">请选择邀请对象</option>`,
+    ...options.map((item) => {
+      const roleTag = getUserMessageRoleTag(item.role);
+      const subtitle = item.subtitle ? ` · ${item.subtitle}` : "";
+      const displayLabel = `${item.label || item.username || `用户#${item.user_id}`}${subtitle}`;
+      return `<option value="${escapeHtml(String(item.user_id))}" data-role-key="${escapeHtml(roleTag.key)}" data-role="${escapeHtml(String(item.role || ""))}" data-display-label="${escapeHtml(displayLabel)}">${escapeHtml(`${roleTag.label} ${displayLabel}`)}</option>`;
+    }),
+  ].join("");
+}
+
+function renderGroupChatDetail() {
+  if (!els.groupChatDetail) return;
+  const groupItem = state.groupChats.find((item) => String(item.id) === String(state.selectedGroupChatId));
+  if (!groupItem) {
+    els.groupChatDetail.innerHTML = `<article class="empty-card">请选择一个群聊查看详情。</article>`;
+    return;
+  }
+  const isOwner = groupItem.my_member_role === "owner";
+  const messages = state.groupChatMessages || [];
+  const inviteOptions = renderGroupChatInviteOptions(groupItem);
+  const members = (groupItem.members || []).map((member) => {
+    const muted = Boolean(member.muted_until);
+    const roleBadge = window.UserRoleBadges?.renderRoleBadge ? window.UserRoleBadges.renderRoleBadge(member.user_role || "Guest") : "";
+    return `
+      <article class="group-chat-member-card">
+        <div>
+          <strong>${escapeHtml(member.display_name || member.username || `用户#${member.user_id}`)}</strong>
+          <p>${escapeHtml([member.alliance, member.guild, member.username].filter(Boolean).join(" / ") || "普通用户")}</p>
+          <div class="profile-role-badge-row">${roleBadge}</div>
+        </div>
+        <div class="group-chat-member-card__actions">
+          <span class="${escapeHtml(muted ? "member-status member-status--rejected" : "member-status member-status--verified")}">${escapeHtml(member.member_role === "owner" ? "群主" : (muted ? "已禁言" : "正常"))}</span>
+          ${isOwner && member.member_role !== "owner" ? `<button type="button" class="ghost-btn" data-group-member-action="mute" data-user-id="${member.user_id}" data-muted="${muted ? "0" : "1"}">${muted ? "取消禁言" : "禁言"}</button>` : ""}
+          ${isOwner && member.member_role !== "owner" ? `<button type="button" class="ghost-btn" data-group-member-action="remove" data-user-id="${member.user_id}">移除</button>` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+  const messageHtml = messages.length
+    ? messages.map((item) => `
+        <article class="group-chat-message ${item.is_self ? "is-self" : ""}">
+          <strong>${escapeHtml(item.display_name || item.username || `用户#${item.sender_user_id}`)}</strong>
+          <small>${escapeHtml(item.created_at || "-")}</small>
+          <p>${escapeHtml(item.message || "")}</p>
+        </article>
+      `).join("")
+    : `<article class="empty-card">还没有群消息，发出第一句吧。</article>`;
+  els.groupChatDetail.innerHTML = `
+    <section class="group-chat-detail__head">
+      <div>
+        <h4>${escapeHtml(groupItem.name || `群聊#${groupItem.id}`)}</h4>
+        <p>${escapeHtml(`${groupItem.member_count || 0} 人 · ${isOwner ? "你是群主" : "你已加入该群"}`)}</p>
+      </div>
+      ${isOwner ? `<button type="button" class="danger-btn" data-group-owner-action="disband">解散群聊</button>` : ""}
+    </section>
+    ${isOwner ? `
+      <form id="groupChatInviteForm" class="group-chat-invite-form">
+        <label class="group-chat-invite-form__field">
+          <span class="group-chat-invite-form__label">邀请对象</span>
+          <div class="select-shell">
+            <select id="groupChatInviteTarget">${inviteOptions}</select>
+          </div>
+        </label>
+        <label class="group-chat-invite-form__field">
+          <span class="group-chat-invite-form__label">邀请留言</span>
+          <input id="groupChatInviteMessage" class="group-chat-invite-form__input" type="text" maxlength="300" placeholder="邀请留言（可选）">
+        </label>
+        <button type="button" class="primary-btn group-chat-invite-form__submit" data-group-owner-action="invite">发起邀请</button>
+      </form>
+    ` : ""}
+    <section class="group-chat-message-list">${messageHtml}</section>
+    <form id="groupChatMessageForm" class="group-chat-message-form">
+      <label class="group-chat-message-form__field">
+        <span class="group-chat-message-form__label">群消息</span>
+        <textarea id="groupChatMessageInput" class="group-chat-message-form__input" rows="4" maxlength="2000" placeholder="${groupItem.my_muted_until ? "你已被禁言，暂时不能发言" : "输入群消息"}" ${groupItem.my_muted_until ? "disabled" : ""}></textarea>
+      </label>
+      <button type="button" class="primary-btn group-chat-message-form__submit" data-group-owner-action="send-message" ${groupItem.my_muted_until ? "disabled" : ""}>发送</button>
+    </form>
+    <section class="group-chat-member-list">${members || `<article class="empty-card">暂无成员。</article>`}</section>
+  `;
+  window.refreshCustomSelectUI?.([document.querySelector("#groupChatInviteTarget")].filter(Boolean));
+}
+
+function renderGroupChatInvitationList() {
+  if (!els.groupChatInvitationList) return;
+  const items = state.groupChatInvitations || [];
+  if (!items.length) {
+    els.groupChatInvitationList.innerHTML = `<article class="empty-card">暂无入群邀请记录。</article>`;
+    return;
+  }
+  els.groupChatInvitationList.innerHTML = items.map((item) => `
+    <article class="request-item">
+      <div class="request-item__body">
+        <strong>${escapeHtml(item.group_name || `群聊#${item.group_chat_id}`)}</strong>
+        <p>${escapeHtml(item.is_outgoing ? `我邀请了 ${item.invitee_display_name || item.invitee_username || "-"}` : `${item.inviter_display_name || item.inviter_username || "-"} 邀请我入群`)}</p>
+        <p><span class="${escapeHtml(item.status === "accepted" ? "member-status member-status--verified" : item.status === "rejected" ? "member-status member-status--rejected" : "member-status member-status--pending")}">${escapeHtml(item.status === "accepted" ? "已同意" : item.status === "rejected" ? "已拒绝" : "待处理")}</span></p>
+        <small>发起时间：${escapeHtml(item.created_at || "-")}</small>
+        ${item.responded_at ? `<small>处理时间：${escapeHtml(item.responded_at)}</small>` : ""}
+        ${item.message ? `<p class="request-item__comment">邀请留言：${escapeHtml(item.message)}</p>` : ""}
+        ${item.response_message ? `<p class="request-item__comment">回复结果：${escapeHtml(item.response_message)}</p>` : ""}
+      </div>
+      ${item.can_review ? `
+        <div class="request-item__actions">
+          <textarea class="request-comment-input" data-group-chat-response="${item.id}" rows="3" placeholder="回复留言（可选）"></textarea>
+          <button type="button" class="action-btn action-btn--approve" data-group-chat-invite-action="accept" data-id="${item.id}">同意</button>
+          <button type="button" class="action-btn action-btn--reject" data-group-chat-invite-action="reject" data-id="${item.id}">拒绝</button>
+        </div>
+      ` : ""}
+    </article>
+  `).join("");
+}
+
+async function selectGroupChat(groupChatId) {
+  if (!groupChatId) return;
+  state.selectedGroupChatId = groupChatId;
+  try {
+    await loadGroupChatMessages(groupChatId, true);
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  renderAuth();
+  renderGroupChatList();
+  renderGroupChatDetail();
+}
+
+async function submitGroupChatCreateForm(event) {
+  event.preventDefault();
+  const name = els.groupChatNameInput?.value.trim() || "";
+  if (!name) {
+    toast("请输入群聊名称");
+    return;
+  }
+  try {
+    const result = await request("/api/group-chats", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    if (els.groupChatNameInput) {
+      els.groupChatNameInput.value = "";
+    }
+    await loadGroupChats();
+    state.selectedGroupChatId = result.item?.id || state.groupChats[0]?.id || null;
+    if (state.selectedGroupChatId) {
+      await loadGroupChatMessages(state.selectedGroupChatId, true);
+    }
+    renderAuth();
+    renderGroupChatList();
+    renderGroupChatDetail();
+    toast(result.message || "群聊创建成功");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function handleGroupOwnerAction(target) {
+  const action = target.dataset.groupOwnerAction;
+  const groupChatId = state.selectedGroupChatId;
+  if (!groupChatId) return;
+  if (action === "send-message") {
+    const input = document.querySelector("#groupChatMessageInput");
+    const message = input?.value.trim() || "";
+    if (!message) {
+      toast("请输入群消息");
+      return;
+    }
+    try {
+      const result = await request(`/api/group-chats/${groupChatId}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      });
+      if (input) input.value = "";
+      await Promise.all([loadGroupChats(), loadGroupChatMessages(groupChatId, true)]);
+      renderAuth();
+      renderGroupChatList();
+      renderGroupChatDetail();
+      toast(result.message || "消息已发送");
+    } catch (error) {
+      toast(error.message);
+    }
+    return;
+  }
+  if (action === "invite") {
+    const targetSelect = document.querySelector("#groupChatInviteTarget");
+    const messageInput = document.querySelector("#groupChatInviteMessage");
+    const inviteeUserId = targetSelect?.value || "";
+    const message = messageInput?.value.trim() || "";
+    if (!inviteeUserId) {
+      toast("请选择邀请对象");
+      return;
+    }
+    try {
+      const result = await request(`/api/group-chats/${groupChatId}/invite`, {
+        method: "POST",
+        body: JSON.stringify({ invitee_user_id: Number(inviteeUserId), message }),
+      });
+      if (messageInput) messageInput.value = "";
+      if (targetSelect) targetSelect.value = "";
+      renderGroupChatDetail();
+      toast(result.message || "入群邀请已发出");
+    } catch (error) {
+      toast(error.message);
+    }
+    return;
+  }
+  if (action === "disband") {
+    const confirmed = await openDangerConfirm({
+      title: "解散群聊",
+      message: "解散后所有成员都会被移出，这个操作不可撤销。",
+      confirmText: "确认解散",
+    });
+    if (!confirmed) return;
+    try {
+      const result = await request(`/api/group-chats/${groupChatId}`, {
+        method: "DELETE",
+        body: JSON.stringify({}),
+      });
+      await loadGroupChats();
+      state.selectedGroupChatId = state.groupChats[0]?.id || null;
+      if (state.selectedGroupChatId) {
+        await loadGroupChatMessages(state.selectedGroupChatId, true);
+      } else {
+        state.groupChatMessages = [];
+      }
+      renderAuth();
+      renderGroupChatList();
+      renderGroupChatDetail();
+      toast(result.message || "群聊已解散");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+}
+
+async function handleGroupMemberAction(target) {
+  const action = target.dataset.groupMemberAction;
+  const userId = target.dataset.userId;
+  const groupChatId = state.selectedGroupChatId;
+  if (!action || !userId || !groupChatId) return;
+  try {
+    if (action === "mute") {
+      const muted = target.dataset.muted === "1";
+      const result = await request(`/api/group-chats/${groupChatId}/mute`, {
+        method: "POST",
+        body: JSON.stringify({ member_user_id: Number(userId), muted }),
+      });
+      await loadGroupChats();
+      await loadGroupChatMessages(groupChatId, true);
+      renderGroupChatList();
+      renderGroupChatDetail();
+      toast(result.message || (muted ? "已禁言该成员" : "已取消禁言"));
+      return;
+    }
+    if (action === "remove") {
+      const confirmed = await openDangerConfirm({
+        title: "移除成员",
+        message: "被移除后，该成员将无法继续查看群消息。",
+        confirmText: "确认移除",
+      });
+      if (!confirmed) return;
+      const result = await request(`/api/group-chats/${groupChatId}/members/${userId}`, {
+        method: "DELETE",
+        body: JSON.stringify({}),
+      });
+      await loadGroupChats();
+      await loadGroupChatMessages(groupChatId, true);
+      renderAuth();
+      renderGroupChatList();
+      renderGroupChatDetail();
+      toast(result.message || "已移除该成员");
+    }
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function reviewGroupChatInvitation(invitationId, action) {
+  if (!invitationId || !action) return;
+  const commentInput = els.groupChatInvitationList?.querySelector(`[data-group-chat-response="${invitationId}"]`);
+  const response_message = commentInput instanceof HTMLTextAreaElement ? commentInput.value.trim() : "";
+  try {
+    const result = await request(`/api/group-chat-invitations/${invitationId}`, {
+      method: "POST",
+      body: JSON.stringify({ action, response_message }),
+    });
+    await Promise.all([loadGroupChatInvitations(), loadGroupChats()]);
+    if (state.selectedGroupChatId) {
+      await loadGroupChatMessages(state.selectedGroupChatId, true).catch(() => {});
+    }
+    renderAuth();
+    renderGroupChatInvitationList();
+    renderGroupChatList();
+    renderGroupChatDetail();
+    toast(result.message || (action === "accept" ? "已加入群聊" : "已拒绝邀请"));
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 function getIdentitySwapItems() {
@@ -189,6 +696,7 @@ function syncIdentitySwapOptions(changedField = "alliance") {
     const firstMember = [...els.identitySwapMember.options].find((option) => option.value);
     els.identitySwapMember.value = firstMember?.value || "";
   }
+  window.refreshCustomSelectUI?.([els.identitySwapGuild, els.identitySwapMember]);
   syncIdentitySwapSummary();
 }
 
@@ -216,6 +724,7 @@ async function openIdentitySwapModal() {
   if (els.identitySwapMessage) {
     els.identitySwapMessage.value = "";
   }
+  window.refreshCustomSelectUI?.([els.identitySwapAlliance]);
   syncIdentitySwapOptions("alliance");
   els.identitySwapModal.classList.remove("hidden");
 }
@@ -417,6 +926,7 @@ function syncRoleApplyTargetOptions(selectedValue = "") {
     els.roleApplyTargetLabel.textContent = requestType === "guild" ? "目标妖盟" : "目标联盟";
   }
   els.roleApplyAlliance.innerHTML = renderRoleApplyTargetOptions(requestType, selectedValue);
+  window.refreshCustomSelectUI?.([els.roleApplyType, els.roleApplyAlliance]);
 }
 
 async function submitRoleApplyForm(event) {
@@ -558,6 +1068,9 @@ function renderAuth() {
   }
   els.roleRequestBtn?.classList.toggle("hidden", !state.me.authenticated);
   els.certRequestBtn?.classList.toggle("hidden", !(state.me.authenticated && (currentRole === "Guest" || canReviewMemberRequests())));
+  els.groupChatBtn?.classList.toggle("hidden", !(state.me.authenticated && !state.me.is_admin));
+  els.groupChatInvitationBtn?.classList.toggle("hidden", !(state.me.authenticated && !state.me.is_admin));
+  els.userMessageBtn?.classList.toggle("hidden", !(state.me.authenticated && !state.me.is_admin));
   els.identitySwapBtn?.classList.toggle("hidden", !(state.me.authenticated && !state.me.is_admin));
   els.identitySwapRequestBtn?.classList.toggle("hidden", !(state.me.authenticated && !state.me.is_admin));
   const roleBadge = document.querySelector("#roleRequestBadge");
@@ -573,6 +1086,24 @@ function renderAuth() {
       : state.myMemberRequestUnreadCount;
     certBadge.textContent = count;
     certBadge.classList.toggle("hidden", count === 0);
+  }
+  const groupChatBadge = document.querySelector("#groupChatBadge");
+  if (groupChatBadge) {
+    const count = Number(state.groupChatUnreadCount || 0);
+    groupChatBadge.textContent = count;
+    groupChatBadge.classList.toggle("hidden", count === 0);
+  }
+  const groupChatInvitationBadge = document.querySelector("#groupChatInvitationBadge");
+  if (groupChatInvitationBadge) {
+    const count = Number(state.groupChatInvitationUnreadCount || 0);
+    groupChatInvitationBadge.textContent = count;
+    groupChatInvitationBadge.classList.toggle("hidden", count === 0);
+  }
+  const userMessageBadge = document.querySelector("#userMessageBadge");
+  if (userMessageBadge) {
+    const count = Number(state.userMessageUnreadCount || 0);
+    userMessageBadge.textContent = count;
+    userMessageBadge.classList.toggle("hidden", count === 0);
   }
   const identitySwapBadge = document.querySelector("#identitySwapRequestBadge");
   if (identitySwapBadge) {

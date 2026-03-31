@@ -38,6 +38,18 @@ function handleModalDismiss(event) {
     closeCertRequestModal();
     return;
   }
+  if (target.dataset.closeModal === "group-chat") {
+    closeGroupChatModal();
+    return;
+  }
+  if (target.dataset.closeModal === "group-chat-invitation") {
+    closeGroupChatInvitationModal();
+    return;
+  }
+  if (target.dataset.closeModal === "user-message") {
+    closeUserMessageModal();
+    return;
+  }
   if (target.dataset.closeModal === "identity-swap") {
     closeIdentitySwapModal();
     return;
@@ -117,6 +129,18 @@ function handleModalKeydown(event) {
   }
   if (event.key === "Escape" && !els.certRequestModal?.classList.contains("hidden")) {
     closeCertRequestModal();
+    return;
+  }
+  if (event.key === "Escape" && !els.groupChatModal?.classList.contains("hidden")) {
+    closeGroupChatModal();
+    return;
+  }
+  if (event.key === "Escape" && !els.groupChatInvitationModal?.classList.contains("hidden")) {
+    closeGroupChatInvitationModal();
+    return;
+  }
+  if (event.key === "Escape" && !els.userMessageModal?.classList.contains("hidden")) {
+    closeUserMessageModal();
     return;
   }
   if (event.key === "Escape" && !els.identitySwapModal?.classList.contains("hidden")) {
@@ -270,8 +294,8 @@ async function handleGuildDetailAction(event) {
       toast("请先登录后再成为成员");
       return;
     }
-    if (currentUserRole() !== "AllianceAdmin") {
-      toast("当前账号不是盟主，不能直接成为成员");
+    if (currentUserRole() !== "AllianceAdmin" && currentUserRole() !== "SuperAdmin") {
+      toast("当前账号不是盟主或超级管理员，不能直接成为成员");
       return;
     }
     if (!memberId) return;

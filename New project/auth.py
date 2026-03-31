@@ -31,12 +31,13 @@ LEAGUE_SCOPE_SEPARATOR = "|"
 VALID_ROLES = {ROLE_GUEST, ROLE_VERIFIEDUSER, ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN}
 DEFAULT_ROLE_PERMISSIONS = {
     ROLE_GUEST: {"view_public_content", "edit_own_profile", "upload_own_screenshot"},
-    ROLE_VERIFIEDUSER: {"view_public_content", "create_posts", "edit_own_profile", "upload_own_screenshot"},
+    ROLE_VERIFIEDUSER: {"view_public_content", "create_posts", "edit_own_profile", "upload_own_screenshot", "create_group_chat"},
     ROLE_ALLIANCEADMIN: {
         "view_public_content",
         "create_posts",
         "edit_own_profile",
         "upload_own_screenshot",
+        "create_group_chat",
         "admin_panel_access",
         "manage_announcements",
         "manage_guilds",
@@ -47,6 +48,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "create_posts",
         "edit_own_profile",
         "upload_own_screenshot",
+        "create_group_chat",
         "admin_panel_access",
         "manage_announcements",
         "manage_guilds",

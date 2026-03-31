@@ -176,6 +176,8 @@ admin_role_request_review_lock = threading.Lock()
 member_cert_request_review_lock = threading.Lock()
 identity_swap_request_review_lock = threading.Lock()
 WS_MAGIC_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+USER_MESSAGE_TABLE_ROW_LIMIT = 1_000_000
+GROUP_CHAT_MESSAGE_TABLE_ROW_LIMIT = 1_000_000
 
 # Thread pool for async database writes
 db_executor = ThreadPoolExecutor(max_workers=2)
@@ -230,6 +232,285 @@ def broadcast_auth_event_to_superadmins(payload):
         payload,
         lambda session: bool(session.get("is_admin")) or session.get("role") == ROLE_SUPERADMIN,
     )
+
+
+def build_user_message_table_name(user_id, table_seq):
+    return f"user_messages_{int(user_id)}_{int(table_seq)}"
+
+
+def ensure_user_message_registry(connection):
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_message_table_registry (
+            user_id INTEGER NOT NULL,
+            table_seq INTEGER NOT NULL,
+            row_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, table_seq)
+        )
+        """
+    )
+
+
+def ensure_user_message_table(connection, user_id, table_seq):
+    table_name = build_user_message_table_name(user_id, table_seq)
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS "{table_name}" (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_user_id INTEGER NOT NULL,
+            receiver_user_id INTEGER NOT NULL,
+            counterpart_user_id INTEGER NOT NULL,
+            direction TEXT NOT NULL DEFAULT 'in',
+            message TEXT NOT NULL DEFAULT '',
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        f'CREATE INDEX IF NOT EXISTS "idx_{table_name}_counterpart_created" ON "{table_name}" (counterpart_user_id, created_at DESC, id DESC)'
+    )
+    connection.execute(
+        f'CREATE INDEX IF NOT EXISTS "idx_{table_name}_unread" ON "{table_name}" (direction, is_read, created_at DESC)'
+    )
+    return table_name
+
+
+def ensure_active_user_message_table(connection, user_id):
+    user_id = int(user_id)
+    ensure_user_message_registry(connection)
+    timestamp = now_text()
+    row = connection.execute(
+        """
+        SELECT table_seq, row_count
+        FROM user_message_table_registry
+        WHERE user_id = ?
+        ORDER BY table_seq DESC
+        LIMIT 1
+        """,
+        (user_id,),
+    ).fetchone()
+    if not row:
+        table_seq = 1
+        connection.execute(
+            """
+            INSERT INTO user_message_table_registry (user_id, table_seq, row_count, created_at, updated_at)
+            VALUES (?, ?, 0, ?, ?)
+            """,
+            (user_id, table_seq, timestamp, timestamp),
+        )
+        ensure_user_message_table(connection, user_id, table_seq)
+        return build_user_message_table_name(user_id, table_seq), table_seq
+
+    table_seq = int(row["table_seq"] or 1)
+    row_count = int(row["row_count"] or 0)
+    if row_count >= USER_MESSAGE_TABLE_ROW_LIMIT:
+        table_seq += 1
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO user_message_table_registry (user_id, table_seq, row_count, created_at, updated_at)
+            VALUES (?, ?, 0, ?, ?)
+            """,
+            (user_id, table_seq, timestamp, timestamp),
+        )
+    ensure_user_message_table(connection, user_id, table_seq)
+    return build_user_message_table_name(user_id, table_seq), table_seq
+
+
+def insert_user_message_copy(
+    connection,
+    *,
+    owner_user_id,
+    sender_user_id,
+    receiver_user_id,
+    counterpart_user_id,
+    direction,
+    message,
+    is_read,
+    created_at,
+):
+    table_name, table_seq = ensure_active_user_message_table(connection, owner_user_id)
+    connection.execute(
+        f"""
+        INSERT INTO "{table_name}" (
+            sender_user_id, receiver_user_id, counterpart_user_id, direction, message, is_read, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(sender_user_id),
+            int(receiver_user_id),
+            int(counterpart_user_id),
+            str(direction or "in"),
+            str(message or ""),
+            int(bool(is_read)),
+            created_at,
+        ),
+    )
+    connection.execute(
+        """
+        UPDATE user_message_table_registry
+        SET row_count = row_count + 1, updated_at = ?
+        WHERE user_id = ? AND table_seq = ?
+        """,
+        (created_at, int(owner_user_id), int(table_seq)),
+    )
+
+
+def list_user_message_tables(connection, user_id):
+    ensure_user_message_registry(connection)
+    rows = connection.execute(
+        """
+        SELECT table_seq
+        FROM user_message_table_registry
+        WHERE user_id = ?
+        ORDER BY table_seq DESC
+        """,
+        (int(user_id),),
+    ).fetchall()
+    table_names = []
+    for row in rows:
+        table_name = build_user_message_table_name(user_id, row["table_seq"])
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+        if exists:
+            table_names.append(table_name)
+    return table_names
+
+
+def build_group_chat_message_table_name(group_chat_id, table_seq):
+    return f"group_chat_messages_{int(group_chat_id)}_{int(table_seq)}"
+
+
+def ensure_group_chat_message_registry(connection):
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS group_chat_message_table_registry (
+            group_chat_id INTEGER NOT NULL,
+            table_seq INTEGER NOT NULL,
+            row_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (group_chat_id, table_seq)
+        )
+        """
+    )
+
+
+def ensure_group_chat_message_table(connection, group_chat_id, table_seq):
+    table_name = build_group_chat_message_table_name(group_chat_id, table_seq)
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS "{table_name}" (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_user_id INTEGER NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        f'CREATE INDEX IF NOT EXISTS "idx_{table_name}_created" ON "{table_name}" (created_at DESC, id DESC)'
+    )
+    connection.execute(
+        f'CREATE INDEX IF NOT EXISTS "idx_{table_name}_sender_created" ON "{table_name}" (sender_user_id, created_at DESC)'
+    )
+    return table_name
+
+
+def ensure_active_group_chat_message_table(connection, group_chat_id):
+    group_chat_id = int(group_chat_id)
+    ensure_group_chat_message_registry(connection)
+    timestamp = now_text()
+    row = connection.execute(
+        """
+        SELECT table_seq, row_count
+        FROM group_chat_message_table_registry
+        WHERE group_chat_id = ?
+        ORDER BY table_seq DESC
+        LIMIT 1
+        """,
+        (group_chat_id,),
+    ).fetchone()
+    if not row:
+        table_seq = 1
+        connection.execute(
+            """
+            INSERT INTO group_chat_message_table_registry (group_chat_id, table_seq, row_count, created_at, updated_at)
+            VALUES (?, ?, 0, ?, ?)
+            """,
+            (group_chat_id, table_seq, timestamp, timestamp),
+        )
+        ensure_group_chat_message_table(connection, group_chat_id, table_seq)
+        return build_group_chat_message_table_name(group_chat_id, table_seq), table_seq
+
+    table_seq = int(row["table_seq"] or 1)
+    row_count = int(row["row_count"] or 0)
+    if row_count >= GROUP_CHAT_MESSAGE_TABLE_ROW_LIMIT:
+        table_seq += 1
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO group_chat_message_table_registry (group_chat_id, table_seq, row_count, created_at, updated_at)
+            VALUES (?, ?, 0, ?, ?)
+            """,
+            (group_chat_id, table_seq, timestamp, timestamp),
+        )
+    ensure_group_chat_message_table(connection, group_chat_id, table_seq)
+    return build_group_chat_message_table_name(group_chat_id, table_seq), table_seq
+
+
+def insert_group_chat_message(connection, *, group_chat_id, sender_user_id, message, created_at):
+    table_name, table_seq = ensure_active_group_chat_message_table(connection, group_chat_id)
+    cursor = connection.execute(
+        f"""
+        INSERT INTO "{table_name}" (sender_user_id, message, created_at)
+        VALUES (?, ?, ?)
+        """,
+        (
+            int(sender_user_id),
+            str(message or ""),
+            str(created_at or now_text()),
+        ),
+    )
+    connection.execute(
+        """
+        UPDATE group_chat_message_table_registry
+        SET row_count = row_count + 1, updated_at = ?
+        WHERE group_chat_id = ? AND table_seq = ?
+        """,
+        (created_at, int(group_chat_id), int(table_seq)),
+    )
+    return {
+        "table_name": table_name,
+        "table_seq": int(table_seq),
+        "message_id": int(cursor.lastrowid or 0),
+    }
+
+
+def list_group_chat_message_tables(connection, group_chat_id):
+    ensure_group_chat_message_registry(connection)
+    rows = connection.execute(
+        """
+        SELECT table_seq
+        FROM group_chat_message_table_registry
+        WHERE group_chat_id = ?
+        ORDER BY table_seq DESC
+        """,
+        (int(group_chat_id),),
+    ).fetchall()
+    table_names = []
+    for row in rows:
+        table_name = build_group_chat_message_table_name(group_chat_id, row["table_seq"])
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+        if exists:
+            table_names.append(table_name)
+    return table_names
 
 
 class RichTextSanitizer(HTMLParser):
@@ -426,6 +707,8 @@ def initialize_database():
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     AVATAR_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     with open_db() as connection:
+        ensure_user_message_registry(connection)
+        ensure_group_chat_message_registry(connection)
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS admins (
@@ -483,8 +766,84 @@ def initialize_database():
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS group_chats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                owner_user_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                member_count INTEGER NOT NULL DEFAULT 1,
+                last_message_at TEXT,
+                last_message_sender_user_id INTEGER,
+                last_message_preview TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS group_chat_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                member_role TEXT NOT NULL DEFAULT 'member',
+                status TEXT NOT NULL DEFAULT 'active',
+                muted_until TEXT,
+                last_read_message_at TEXT,
+                joined_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS group_chat_invitations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_chat_id INTEGER NOT NULL,
+                inviter_user_id INTEGER NOT NULL,
+                invitee_user_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                message TEXT NOT NULL DEFAULT '',
+                response_message TEXT NOT NULL DEFAULT '',
+                is_read_inviter INTEGER NOT NULL DEFAULT 1,
+                inviter_read_at TEXT,
+                is_read_invitee INTEGER NOT NULL DEFAULT 0,
+                invitee_read_at TEXT,
+                created_at TEXT NOT NULL,
+                responded_at TEXT
+            );
             """
         )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_group_chats_owner_status ON group_chats(owner_user_id, status, updated_at DESC)")
+        connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_group_chat_members_unique ON group_chat_members(group_chat_id, user_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_group_chat_members_user_status ON group_chat_members(user_id, status, updated_at DESC)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_group_chat_members_group_status ON group_chat_members(group_chat_id, status, updated_at DESC)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_group_chat_invites_invitee_status ON group_chat_invitations(invitee_user_id, status, created_at DESC)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_group_chat_invites_inviter_status ON group_chat_invitations(inviter_user_id, status, created_at DESC)")
+        group_chat_columns = [row["name"] for row in connection.execute("PRAGMA table_info(group_chats)").fetchall()]
+        if "last_message_at" not in group_chat_columns:
+            connection.execute("ALTER TABLE group_chats ADD COLUMN last_message_at TEXT")
+        if "last_message_sender_user_id" not in group_chat_columns:
+            connection.execute("ALTER TABLE group_chats ADD COLUMN last_message_sender_user_id INTEGER")
+        if "last_message_preview" not in group_chat_columns:
+            connection.execute("ALTER TABLE group_chats ADD COLUMN last_message_preview TEXT NOT NULL DEFAULT ''")
+        group_chat_member_columns = [row["name"] for row in connection.execute("PRAGMA table_info(group_chat_members)").fetchall()]
+        if "member_role" not in group_chat_member_columns:
+            connection.execute("ALTER TABLE group_chat_members ADD COLUMN member_role TEXT NOT NULL DEFAULT 'member'")
+        if "status" not in group_chat_member_columns:
+            connection.execute("ALTER TABLE group_chat_members ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+        if "muted_until" not in group_chat_member_columns:
+            connection.execute("ALTER TABLE group_chat_members ADD COLUMN muted_until TEXT")
+        if "last_read_message_at" not in group_chat_member_columns:
+            connection.execute("ALTER TABLE group_chat_members ADD COLUMN last_read_message_at TEXT")
+        group_chat_invitation_columns = [row["name"] for row in connection.execute("PRAGMA table_info(group_chat_invitations)").fetchall()]
+        if "response_message" not in group_chat_invitation_columns:
+            connection.execute("ALTER TABLE group_chat_invitations ADD COLUMN response_message TEXT NOT NULL DEFAULT ''")
+        if "is_read_inviter" not in group_chat_invitation_columns:
+            connection.execute("ALTER TABLE group_chat_invitations ADD COLUMN is_read_inviter INTEGER NOT NULL DEFAULT 1")
+        if "inviter_read_at" not in group_chat_invitation_columns:
+            connection.execute("ALTER TABLE group_chat_invitations ADD COLUMN inviter_read_at TEXT")
+        if "is_read_invitee" not in group_chat_invitation_columns:
+            connection.execute("ALTER TABLE group_chat_invitations ADD COLUMN is_read_invitee INTEGER NOT NULL DEFAULT 0")
+        if "invitee_read_at" not in group_chat_invitation_columns:
+            connection.execute("ALTER TABLE group_chat_invitations ADD COLUMN invitee_read_at TEXT")
+        if "responded_at" not in group_chat_invitation_columns:
+            connection.execute("ALTER TABLE group_chat_invitations ADD COLUMN responded_at TEXT")
 
         connection.execute(
             """

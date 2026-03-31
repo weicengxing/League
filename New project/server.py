@@ -10,9 +10,11 @@ from auth import initialize_auth_database, register_session_invalidation_notifie
 from alliance_server.mixins.api_routes import ApiRoutesMixin
 from alliance_server.mixins.core import CoreHandlerMixin
 from alliance_server.mixins.db_admin import DatabaseAdminMixin
+from alliance_server.mixins.group_chats import GroupChatsMixin
 from alliance_server.mixins.member_guild import MemberGuildMixin
 from alliance_server.mixins.profile_export import ProfileExportMixin
 from alliance_server.mixins.review_requests import ReviewRequestsMixin
+from alliance_server.mixins.user_messages import UserMessagesMixin
 from alliance_server.shared import (
     HOST,
     PORT,
@@ -31,8 +33,10 @@ from alliance_server.shared import (
 class AllianceHandler(
     ApiRoutesMixin,
     DatabaseAdminMixin,
+    GroupChatsMixin,
     MemberGuildMixin,
     ReviewRequestsMixin,
+    UserMessagesMixin,
     ProfileExportMixin,
     CoreHandlerMixin,
     BaseHTTPRequestHandler,

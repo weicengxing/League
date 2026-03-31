@@ -742,8 +742,8 @@ class ReviewRequestsMixin:
         if not user.get("id"):
             self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
             return
-        if (user.get("role") or "") != ROLE_ALLIANCEADMIN:
-            self.send_json({"error": "当前账号不是盟主，不能直接成为成员"}, status=HTTPStatus.FORBIDDEN)
+        if (user.get("role") or "") not in {ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN}:
+            self.send_json({"error": "当前账号不是盟主或超级管理员，不能直接成为成员"}, status=HTTPStatus.FORBIDDEN)
             return
 
         member_id = str(payload.get("member_id", "")).strip()
