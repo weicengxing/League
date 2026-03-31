@@ -429,6 +429,7 @@ class ReviewRequestsMixin:
                     self.send_json({"error": "该成员已经认证"}, status=HTTPStatus.CONFLICT)
                     return
                 timestamp = now_text()
+                verified_league = normalize_league_scope(row["alliance"])
                 connection.execute(
                     "UPDATE members SET verified = 1, updated_at = ? WHERE id = ?",
                     (timestamp, row["member_id"]),
@@ -436,10 +437,10 @@ class ReviewRequestsMixin:
                 connection.execute(
                     """
                     UPDATE users
-                    SET member_id = ?, member = ?, role = ?, alliance = ?, member_unbind_available_at = NULL
+                    SET member_id = ?, member = ?, role = ?, alliance = ?, league = ?, member_unbind_available_at = NULL
                     WHERE id = ?
                     """,
-                    (row["member_id"], row["member_id"], ROLE_VERIFIEDUSER, row["alliance"], row["user_id"]),
+                    (row["member_id"], row["member_id"], ROLE_VERIFIEDUSER, row["alliance"], verified_league, row["user_id"]),
                 )
                 update_user_sessions_for_user(
                     row["user_id"],
@@ -447,6 +448,7 @@ class ReviewRequestsMixin:
                     member=row["member_id"],
                     role=ROLE_VERIFIEDUSER,
                     alliance=row["alliance"],
+                    league=verified_league,
                     member_unbind_available_at=None,
                 )
                 connection.execute(
@@ -530,6 +532,7 @@ class ReviewRequestsMixin:
                         connection.rollback()
                         self.send_json({"error": "该成员已经认证"}, status=HTTPStatus.CONFLICT)
                         return
+                    verified_league = normalize_league_scope(row["alliance"])
                     connection.execute(
                         "UPDATE members SET verified = 1, updated_at = ? WHERE id = ?",
                         (timestamp, row["member_id"]),
@@ -537,10 +540,10 @@ class ReviewRequestsMixin:
                     connection.execute(
                         """
                         UPDATE users
-                        SET member_id = ?, member = ?, role = ?, alliance = ?, member_unbind_available_at = NULL
+                        SET member_id = ?, member = ?, role = ?, alliance = ?, league = ?, member_unbind_available_at = NULL
                         WHERE id = ?
                         """,
-                        (row["member_id"], row["member_id"], ROLE_VERIFIEDUSER, row["alliance"], row["user_id"]),
+                        (row["member_id"], row["member_id"], ROLE_VERIFIEDUSER, row["alliance"], verified_league, row["user_id"]),
                     )
                     updated = connection.execute(
                         """
@@ -561,6 +564,7 @@ class ReviewRequestsMixin:
                         member=row["member_id"],
                         role=ROLE_VERIFIEDUSER,
                         alliance=row["alliance"],
+                        league=verified_league,
                         member_unbind_available_at=None,
                     )
                     member_scope = connection.execute(
@@ -684,12 +688,13 @@ class ReviewRequestsMixin:
         keep_role = current_role == ROLE_ALLIANCEADMIN
         next_role = current_role if keep_role else ROLE_GUEST
         next_alliance = user.get("alliance", "") if keep_role else ""
+        next_league = normalize_league_scope(user.get("league", "")) if keep_role else ""
         timestamp = now_text()
         available_at = None if keep_role else (datetime.now() + timedelta(days=self.MEMBER_UNBIND_COOLDOWN_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
         with open_db() as connection:
             db_user = connection.execute(
                 """
-                SELECT id, member_id, member, alliance
+                SELECT id, member_id, member, alliance, league
                 FROM users
                 WHERE id = ?
                 """,
@@ -703,6 +708,8 @@ class ReviewRequestsMixin:
             if not linked_member_id:
                 self.send_json({"error": "褰撳墠璐﹀彿杩樻湭鍏宠仈濡栫洘鎴愬憳韬唤"}, status=HTTPStatus.BAD_REQUEST)
                 return
+            if keep_role:
+                next_league = normalize_league_scope(db_user["league"])
 
             connection.execute(
                 "UPDATE members SET verified = 0, updated_at = ? WHERE id = ?",
@@ -715,10 +722,11 @@ class ReviewRequestsMixin:
                     member = NULL,
                     role = ?,
                     alliance = ?,
+                    league = ?,
                     member_unbind_available_at = ?
                 WHERE id = ?
                 """,
-                (next_role, next_alliance, available_at, user["id"]),
+                (next_role, next_alliance, next_league, available_at, user["id"]),
             )
             connection.commit()
 
@@ -728,6 +736,7 @@ class ReviewRequestsMixin:
             member=None,
             role=next_role,
             alliance=next_alliance,
+            league=next_league,
             member_unbind_available_at=available_at,
         )
         self.send_json(

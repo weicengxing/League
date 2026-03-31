@@ -1,6 +1,6 @@
 from alliance_server.shared import *
 
-from auth import get_current_auth
+from auth import ROLE_ALLIANCEADMIN, get_current_auth, update_user_sessions_for_user
 
 class MemberGuildMixin:
     def touch_member(self, member_id):
@@ -339,6 +339,7 @@ class MemberGuildMixin:
 
     def update_guild(self, guild_key, payload):
         timestamp = now_text()
+        affected_user_leagues = {}
         with open_db() as connection:
             existing = connection.execute("SELECT * FROM guild_registry WHERE guild_key = ?", (guild_key,)).fetchone()
             if not existing:
@@ -431,8 +432,53 @@ class MemberGuildMixin:
                         guild["guild"],
                     ),
                 )
+            if next_key != guild_key:
+                affected_rows = connection.execute(
+                    "SELECT id, league FROM users WHERE league LIKE ?",
+                    (f"%{guild_key}%",),
+                ).fetchall()
+                if affected_rows:
+                    connection.execute(
+                        """
+                        UPDATE users
+                        SET league = REPLACE(league, ?, ?)
+                        WHERE league LIKE ?
+                        """,
+                        (guild_key, next_key, f"%{guild_key}%"),
+                    )
+                    for row in affected_rows:
+                        affected_user_leagues[int(row["id"])] = str(row["league"] or "").replace(guild_key, next_key)
+            linked_users = connection.execute(
+                """
+                SELECT DISTINCT u.id, u.role, u.league
+                FROM users u
+                INNER JOIN members m ON m.id = COALESCE(u.member_id, u.member)
+                WHERE m.guild_code = ? AND m.guild_prefix = ? AND m.guild = ?
+                """,
+                (
+                    guild["guild_code"],
+                    guild["guild_prefix"],
+                    guild["guild"],
+                ),
+            ).fetchall()
+            for row in linked_users:
+                user_id = int(row["id"])
+                current_league = str(row["league"] or "")
+                if str(row["role"] or "") == ROLE_ALLIANCEADMIN:
+                    next_league = current_league.replace(guild_key, next_key) if next_key != guild_key else current_league
+                else:
+                    next_league = next_key
+                if next_league != current_league:
+                    connection.execute(
+                        "UPDATE users SET league = ? WHERE id = ?",
+                        (next_league, user_id),
+                    )
+                    affected_user_leagues[user_id] = next_league
             connection.commit()
         self.send_json({"message": "妖盟更新成功", "item": {**guild, "guild_key": next_key}})
+
+        for user_id, next_league in affected_user_leagues.items():
+            update_user_sessions_for_user(user_id, league=next_league)
 
     def delete_guild(self, guild_key):
         with open_db() as connection:
