@@ -231,8 +231,7 @@ def initialize_auth_database():
             CREATE TABLE IF NOT EXISTS role_permissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 role TEXT NOT NULL,
-                permission TEXT NOT NULL,
-                PRIMARY KEY (id)
+                permission TEXT NOT NULL
             );
             """
         )
