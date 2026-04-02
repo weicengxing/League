@@ -177,7 +177,10 @@ class MemberGuildMixin:
         username = str(payload.get("username", "")).strip()
         password = str(payload.get("password", "")).strip()
         with open_db() as connection:
-            row = connection.execute("SELECT * FROM admins WHERE username = ?", (username,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM users WHERE (username = ? OR email = ?) AND role = ?",
+                (username, username, ROLE_SUPERADMIN),
+            ).fetchone()
 
         if not row:
             self.send_json({"error": "账号或密码错误"}, status=HTTPStatus.UNAUTHORIZED)
@@ -189,7 +192,12 @@ class MemberGuildMixin:
             return
 
         token = secrets.token_hex(24)
-        sessions[token] = {"admin_id": row["id"], "username": row["username"], "display_name": row["display_name"], "created_at": datetime.now().timestamp()}
+        sessions[token] = {
+            "admin_id": row["id"],
+            "username": row["username"],
+            "display_name": row["username"],
+            "created_at": datetime.now().timestamp(),
+        }
 
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json; charset=utf-8")

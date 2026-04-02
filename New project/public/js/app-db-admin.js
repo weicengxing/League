@@ -10,7 +10,6 @@ const dbState = {
 };
 
 const DB_TABLE_NAMES = {
-  admins: "管理员账号",
   announcements: "公告与瓜棚",
   guild_registry: "妖盟注册表",
   members: "成员信息",
@@ -148,7 +147,7 @@ function renderDbTablePanel() {
   if (title) title.textContent = DB_TABLE_NAMES[dbState.currentTable] || dbState.currentTable;
   if (info) info.textContent = `共 ${dbState.totalCount} 条记录`;
 
-  const readOnly = ["admins"].includes(dbState.currentTable);
+  const readOnly = false;
   head.innerHTML = `
     <tr>
       ${dbState.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}
