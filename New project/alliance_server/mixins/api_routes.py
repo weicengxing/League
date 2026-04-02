@@ -100,8 +100,8 @@ class ApiRoutesMixin:
             self.create_guild(payload)
             return
         if parsed.path == "/api/guilds/import":
-            admin = self.require_admin()
-            if not admin:
+            user = self.require_permission("manage_guilds")
+            if not user:
                 return
             self.import_guilds_from_excel()
             return

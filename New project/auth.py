@@ -170,6 +170,38 @@ def update_user_sessions_for_user(user_id, **updates):
         session.update(updates)
 
 
+def ensure_default_superadmin(connection):
+    existing = connection.execute(
+        "SELECT id FROM users WHERE role = ? ORDER BY id ASC LIMIT 1",
+        (ROLE_SUPERADMIN,),
+    ).fetchone()
+    if existing:
+        return
+
+    salt = secrets.token_hex(16)
+    connection.execute(
+        """
+        INSERT INTO users (
+            username, email, member_id, member, role, alliance, league,
+            password_hash, salt, is_active, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "admin",
+            "legacy-admin-admin@system.local",
+            None,
+            None,
+            ROLE_SUPERADMIN,
+            "",
+            "",
+            hash_password("123456", salt),
+            salt,
+            1,
+            now_text(),
+        ),
+    )
+
+
 def initialize_auth_database():
     """初始化认证相关的数据库表"""
     with open_db() as connection:
@@ -202,6 +234,7 @@ def initialize_auth_database():
             );
             """
         )
+        connection.execute("DROP TABLE IF EXISTS admins")
         columns = [row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()]
         if "member_id" not in columns:
             try:
@@ -265,6 +298,7 @@ def initialize_auth_database():
                     "INSERT OR IGNORE INTO role_permissions (role, permission) VALUES (?, ?)",
                     (role, permission),
                 )
+        ensure_default_superadmin(connection)
         connection.commit()
 
 
@@ -588,7 +622,7 @@ class AuthHandler:
             return self.send_json({"error": "发送验证码失败，请检查邮箱地址或稍后重试"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def login(self):
-        """用户登录 - 同时支持管理员和普通用户"""
+        """用户登录 - 基于 users 表和角色体系"""
         payload = self.read_json()
         
         username = str(payload.get("username", "")).strip()
@@ -598,54 +632,6 @@ class AuthHandler:
             return self.send_json({"error": "用户名和密码不能为空"}, HTTPStatus.BAD_REQUEST)
 
         with open_db() as connection:
-            # 先查询管理员表
-            admin_row = connection.execute(
-                "SELECT * FROM admins WHERE username = ?", (username,)
-            ).fetchone()
-            
-            if admin_row:
-                # 验证管理员密码
-                calculated = hash_password(password, admin_row["salt"])
-                if not hmac.compare_digest(calculated, admin_row["password_hash"]):
-                    return self.send_json({"error": "用户名或密码错误"}, HTTPStatus.UNAUTHORIZED)
-                
-                # 管理员登录成功
-                invalidate_user_sessions(admin_row["id"], True)
-                token = secrets.token_hex(24)
-                user_sessions[token] = {
-                    "user_id": admin_row["id"],
-                    "username": admin_row["username"],
-                    "display_name": admin_row["display_name"],
-                    "email": None,
-                    "avatar_url": "",
-                    "role": ROLE_SUPERADMIN,
-                    "is_admin": True,
-                    "created_at": datetime.now().timestamp(),
-                }
-                
-                self.handler.send_response(HTTPStatus.OK)
-                self.handler.send_header("Content-Type", "application/json; charset=utf-8")
-                self.handler.send_header(
-                    "Set-Cookie",
-                    f"{USER_SESSION_COOKIE}={token}; HttpOnly; Path=/; Max-Age={USER_SESSION_TTL_SECONDS}; SameSite=Lax"
-                )
-                self.handler.end_headers()
-                self.handler.wfile.write(
-                    json.dumps({
-                        "message": "管理员登录成功",
-                        "is_admin": True,
-                        "user": {
-                            "id": admin_row["id"],
-                            "username": admin_row["username"],
-                            "display_name": admin_row["display_name"],
-                            "avatar_url": "",
-                            "role": ROLE_SUPERADMIN,
-                        }
-                    }, ensure_ascii=False).encode("utf-8")
-                )
-                return
-
-            # 再查询普通用户表
             row = connection.execute(
                 "SELECT * FROM users WHERE username = ? OR email = ?", (username, username)
             ).fetchone()
@@ -660,22 +646,24 @@ class AuthHandler:
             if not row["is_active"]:
                 return self.send_json({"error": "账号已被禁用"}, HTTPStatus.FORBIDDEN)
 
-            # 普通用户登录成功
+            normalized_role = normalize_role(row["role"])
+            is_superadmin = normalized_role == ROLE_SUPERADMIN
             member_id = ensure_member_binding(connection, row)
-            invalidate_user_sessions(row["id"], False)
+            invalidate_user_sessions(row["id"], is_superadmin)
             token = secrets.token_hex(24)
             user_sessions[token] = {
                 "user_id": row["id"],
                 "username": row["username"],
+                "display_name": row["username"],
                 "email": row["email"],
                 "avatar_url": row["avatar_path"] if "avatar_path" in row.keys() else "",
                 "member_id": member_id,
                 "member": member_id or row["member"],
                 "member_unbind_available_at": row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None,
-                "role": normalize_role(row["role"]),
+                "role": normalized_role,
                 "alliance": row["alliance"],
                 "league": normalize_league_scope(row["league"]),
-                "is_admin": False,
+                "is_admin": is_superadmin,
                 "created_at": datetime.now().timestamp(),
             }
 
@@ -689,21 +677,22 @@ class AuthHandler:
             self.handler.wfile.write(
                 json.dumps({
                     "message": "登录成功",
-                        "is_admin": False,
-                        "user": {
-                            "id": row["id"],
-                            "username": row["username"],
-                            "email": row["email"],
-                            "avatar_url": row["avatar_path"] if "avatar_path" in row.keys() else "",
-                            "member_id": member_id,
-                            "member": member_id or row["member"],
-                            "member_unbind_available_at": row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None,
-                            "role": normalize_role(row["role"]),
-                            "alliance": row["alliance"],
-                            "league": normalize_league_scope(row["league"]),
-                            "League": normalize_league_scope(row["league"]),
-                        }
-                    }, ensure_ascii=False).encode("utf-8")
+                    "is_admin": is_superadmin,
+                    "user": {
+                        "id": row["id"],
+                        "username": row["username"],
+                        "display_name": row["username"],
+                        "email": row["email"],
+                        "avatar_url": row["avatar_path"] if "avatar_path" in row.keys() else "",
+                        "member_id": member_id,
+                        "member": member_id or row["member"],
+                        "member_unbind_available_at": row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None,
+                        "role": normalized_role,
+                        "alliance": row["alliance"],
+                        "league": normalize_league_scope(row["league"]),
+                        "League": normalize_league_scope(row["league"]),
+                    }
+                }, ensure_ascii=False).encode("utf-8")
             )
 
     def logout(self):

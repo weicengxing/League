@@ -82,7 +82,7 @@ async function handleGuildExcelFileSelected(event) {
 
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("alliance", state.dashboard?.alliance_name || "🔮联盟");
+  formData.append("alliance", "🔮联盟");
 
   try {
     const result = await request("/api/guilds/import", {

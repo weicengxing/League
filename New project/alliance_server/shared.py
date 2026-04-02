@@ -187,6 +187,13 @@ def now_text():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def normalize_alliance_name(value):
+    alliance = str(value or "").strip()
+    if not alliance or alliance == "联盟总览":
+        return "🔮联盟"
+    return alliance
+
+
 def split_league_scopes(value):
     return [
         item.strip()
@@ -428,15 +435,6 @@ def initialize_database():
     with open_db() as connection:
         connection.executescript(
             """
-            CREATE TABLE IF NOT EXISTS admins (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                salt TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS announcements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -571,8 +569,8 @@ def initialize_database():
         if "target_read_at" not in identity_swap_request_columns:
             connection.execute("ALTER TABLE identity_swap_requests ADD COLUMN target_read_at TEXT")
 
-        admin_count = connection.execute("SELECT COUNT(*) AS count FROM admins").fetchone()["count"]
-        if admin_count == 0:
+        
+        if False:
             salt = secrets.token_hex(16)
             connection.execute(
                 """
@@ -681,7 +679,8 @@ def initialize_database():
             for entry in grouped.values():
                 upsert_guild_registry(connection, entry)
 
-        connection.execute("UPDATE members SET alliance = '🔮联盟' WHERE alliance = '青云联盟'")
+        connection.execute("UPDATE members SET alliance = '🔮联盟' WHERE alliance IN ('青云联盟', '联盟总览')")
+        connection.execute("UPDATE guild_registry SET alliance = '🔮联盟' WHERE alliance IN ('青云联盟', '联盟总览')")
 
         connection.commit()
 
@@ -695,7 +694,7 @@ def cleanup_sessions():
 def validate_member(payload):
     allow_empty_name = bool(payload.get("allow_empty_name"))
     member = {
-        "alliance": str(payload.get("alliance", "")).strip() or "🔮联盟",
+        "alliance": normalize_alliance_name(payload.get("alliance", "")),
         "hill": str(payload.get("hill", "")).strip() or "默认山头",
         "guild_code": str(payload.get("guild_code", "")).strip(),
         "guild_prefix": str(payload.get("guild_prefix", "")).strip(),
@@ -723,9 +722,10 @@ def validate_member(payload):
 
 
 def validate_guild(payload):
+    alliance = normalize_alliance_name(payload.get("alliance", ""))
     guild = {
-        "alliance": str(payload.get("alliance", "")).strip() or "🔮联盟",
-        "hill": str(payload.get("hill", "")).strip() or str(payload.get("alliance", "")).strip() or "🔮联盟",
+        "alliance": alliance,
+        "hill": str(payload.get("hill", "")).strip() or alliance or "🔮联盟",
         "guild_code": str(payload.get("guild_code", "")).strip(),
         "guild_prefix": str(payload.get("guild_prefix", "")).strip(),
         "guild_power": parse_scaled_number(payload.get("guild_power", 0), "妖盟总战力"),

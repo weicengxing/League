@@ -230,6 +230,15 @@ class ProfileExportMixin:
 
     def import_guilds_from_excel(self):
         """从Excel文件批量导入妖盟数据"""
+        current = get_current_auth(self)
+        if not current.get("authenticated"):
+            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        user = current.get("user") or {}
+        if not self.has_permission(user, "manage_guilds"):
+            self.send_json({"error": "当前账号没有导入妖盟的权限"}, status=HTTPStatus.FORBIDDEN)
+            return
+
         form = parse_form_data(self)
 
         file_item = form.get("file") if hasattr(form, 'get') else form.get("file") if isinstance(form, dict) else None
@@ -237,7 +246,14 @@ class ProfileExportMixin:
             self.send_json({"error": "请先选择Excel文件"}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        default_alliance = str(form.getvalue("alliance", "")).strip() or "🔮联盟"
+        default_alliance = normalize_alliance_name(form.getvalue("alliance", ""))
+        if not current.get("is_admin"):
+            managed_alliance = str(user.get("alliance", "")).strip()
+            if managed_alliance:
+                default_alliance = normalize_alliance_name(managed_alliance)
+        if not self.can_access_alliance(user, default_alliance, "manage_guilds"):
+            self.send_json({"error": "当前账号没有导入该联盟妖盟的权限"}, status=HTTPStatus.FORBIDDEN)
+            return
 
         raw = file_item.file.read()
         if not raw:

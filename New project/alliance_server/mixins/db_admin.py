@@ -39,7 +39,7 @@ class DatabaseAdminMixin:
             rows = connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
             ).fetchall()
-        tables = [row["name"] for row in rows]
+        tables = [row["name"] for row in rows if row["name"] != "admins"]
         return {"tables": tables}
 
     def get_db_table_data(self, table_name):
