@@ -17,6 +17,7 @@ from html.parser import HTMLParser
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -160,8 +161,8 @@ DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = PUBLIC_DIR / "uploads" / "member-screenshots"
 AVATAR_UPLOADS_DIR = PUBLIC_DIR / "uploads" / "avatars"
 DB_PATH = DATA_DIR / "alliance.db"
-HOST = "127.0.0.1"
-PORT = 8878
+HOST = os.environ.get("HOST", "127.0.0.1")
+PORT = int(os.environ.get("PORT", "8878"))
 SESSION_COOKIE = "alliance_session"
 SESSION_TTL_SECONDS = 60 * 60 * 12
 
