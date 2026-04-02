@@ -19,6 +19,10 @@ class DatabaseAdminMixin:
 
         path_parts = parsed.path.strip("/").split("/")
 
+        if len(path_parts) >= 3 and path_parts[2] == "export":
+            self.export_db_file()
+            return
+
         if len(path_parts) >= 3 and path_parts[2] == "tables":
             self.send_json(self.list_db_tables())
             return
@@ -224,3 +228,20 @@ class DatabaseAdminMixin:
                 self.send_json({"message": "记录删除成功"})
         except sqlite3.OperationalError as error:
             self.send_json({"error": f"删除失败: {str(error)}"}, status=HTTPStatus.BAD_REQUEST)
+
+    def export_db_file(self):
+        """Export the database file."""
+        if not DB_PATH.exists():
+            self.send_json({"error": "数据库文件不存在"}, status=HTTPStatus.NOT_FOUND)
+            return
+
+        try:
+            data = DB_PATH.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", 'attachment; filename="alliance.db"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self.send_json({"error": f"导出失败: {str(e)}"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)

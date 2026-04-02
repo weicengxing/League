@@ -175,10 +175,12 @@
         .form-group .input-with-btn {
             display: flex;
             gap: 10px;
+            align-items: stretch;
         }
 
         .form-group .input-with-btn input {
             flex: 1;
+            min-width: 0;
         }
 
         .btn-send-code {
@@ -367,6 +369,48 @@
 
         .text-center {
             text-align: center;
+        }
+
+        @media (max-width: 560px) {
+            body {
+                padding: 12px;
+                align-items: flex-start;
+            }
+
+            .auth-card {
+                padding: 28px 20px;
+                border-radius: 18px;
+            }
+
+            .auth-header {
+                margin-bottom: 28px;
+            }
+
+            .auth-logo {
+                font-size: 38px;
+            }
+
+            .auth-header h1 {
+                font-size: 22px;
+            }
+
+            .step-indicator {
+                gap: 12px;
+                margin-bottom: 24px;
+            }
+
+            .step-line {
+                width: 24px;
+            }
+
+            .form-group .input-with-btn {
+                flex-direction: column;
+            }
+
+            .btn-send-code {
+                width: 100%;
+                min-width: 0;
+            }
         }
     </style>
 </head>

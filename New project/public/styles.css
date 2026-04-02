@@ -38,6 +38,13 @@ body {
     linear-gradient(180deg, #f4f7ef 0%, var(--bg-start) 38%, var(--bg-end) 100%);
 }
 
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+
 button,
 input,
 select,
@@ -2848,6 +2855,35 @@ td {
     font-size: 2.15rem;
   }
 
+  .board-top__brand,
+  .board-top__actions,
+  .request-item,
+  .user-message-card__head,
+  .modal__head,
+  .modal-actions--split,
+  .modal-actions__right,
+  .profile-role-badge-row,
+  .profile-save-row,
+  .group-chat-create-hint {
+    width: 100%;
+  }
+
+  .board-top__actions,
+  .request-item,
+  .user-message-card__head,
+  .modal__head,
+  .modal-actions--split,
+  .modal-actions__right,
+  .profile-save-row,
+  .group-chat-create-hint {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .board-top__actions .ghost-btn {
+    width: 100%;
+  }
+
   .board-top__stats {
     width: 100%;
   }
@@ -2864,6 +2900,10 @@ td {
     padding: 12px;
     border-radius: 22px;
     gap: 12px;
+  }
+
+  .side-filter__summary-grid {
+    grid-template-columns: 1fr;
   }
 
   .side-filter__search-row {
@@ -2924,6 +2964,11 @@ td {
   .detail-member-card__actions > *,
   .actions > * {
     flex: 1 1 100%;
+  }
+
+  .panel-toolbar select {
+    width: 100%;
+    min-width: 0;
   }
 
   .hill-browse-bar {
@@ -3045,6 +3090,40 @@ td {
     grid-column: 2;
   }
 
+  .feed-item {
+    gap: 10px;
+    padding-bottom: 14px;
+  }
+
+  .feed-item strong,
+  .feed-item__content {
+    padding-right: 0;
+  }
+
+  .feed-item__meta,
+  .feed-item__preview-hint,
+  .melon-revoke-btn {
+    position: static;
+  }
+
+  .feed-item__meta {
+    order: 2;
+    font-size: 0.82rem;
+  }
+
+  .feed-item__content {
+    order: 3;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    line-height: 1.6;
+  }
+
+  .feed-item__preview-hint,
+  .melon-revoke-btn {
+    justify-self: start;
+  }
+
   .table-wrap {
     overflow-x: auto;
   }
@@ -3059,7 +3138,15 @@ td {
 
   .modal__dialog,
   .modal__dialog--preview,
-  .modal__dialog--image {
+  .modal__dialog--image,
+  .modal__dialog--wide,
+  .modal__dialog--admin-edit,
+  .modal__dialog--member-edit,
+  .modal__dialog--announcement,
+  .modal__dialog--role-apply,
+  .modal__dialog--identity-swap,
+  .modal__dialog--notice,
+  .modal__dialog--danger {
     width: 100%;
     max-width: none;
     max-height: 90vh;
@@ -3095,6 +3182,15 @@ td {
 
   .group-chat-create-hint {
     align-items: flex-start;
+  }
+
+  .group-chat-member-list {
+    grid-template-columns: 1fr;
+  }
+
+  #dbTablePanel .data-table {
+    width: 1200px;
+    min-width: 1200px;
   }
 
   .status-banner {
@@ -3134,6 +3230,10 @@ td {
     width: 100%;
   }
 
+  .side-filter__summary-grid {
+    grid-template-columns: 1fr;
+  }
+
   .panel-card__head h2,
   .hill-section__head h2 {
     font-size: 1.55rem;
@@ -3153,6 +3253,31 @@ td {
   .detail-meta,
   .ranking-item__meta {
     font-size: 0.9rem;
+  }
+
+  .request-item__actions,
+  .group-chat-member-card__actions {
+    width: 100%;
+  }
+
+  .request-item__actions > *,
+  .group-chat-member-card__actions > * {
+    flex: 1 1 100%;
+  }
+
+  .profile-chip-row,
+  .profile-empty-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-empty-actions > *,
+  .profile-cta-btn {
+    width: 100%;
+  }
+
+  #dbTablePanel .data-table {
+    width: 960px;
+    min-width: 960px;
   }
 }
 .profile-summary {

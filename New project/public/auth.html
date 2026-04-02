@@ -330,6 +330,21 @@
       font-size: 14px;
     }
     .helper-row a { color: #f0d796; text-decoration: none; }
+    .verify-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+    .verify-row input {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .verify-row .submit-btn {
+      flex: 0 0 120px;
+      white-space: nowrap;
+      padding: 16px 18px;
+      font-size: 15px;
+    }
     .grid-two {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -365,10 +380,86 @@
     }
     @media (max-width: 720px) {
       .auth-page { padding: 14px; }
-      .auth-panel, .auth-scene { padding: 22px; }
+      .auth-shell {
+        border-radius: 26px;
+      }
+      .auth-panel, .auth-scene, .panel-frame { padding: 22px; }
       .scene-stats, .grid-two { grid-template-columns: 1fr; }
       .scene-title { font-size: 56px; }
       .tree-ring { display: none; }
+      .scene-tree {
+        width: 240px;
+        height: 280px;
+        bottom: 26px;
+      }
+      .tree-crown {
+        left: 26px;
+        width: 188px;
+        height: 154px;
+      }
+      .tree-trunk {
+        left: 92px;
+        top: 114px;
+        width: 56px;
+        height: 138px;
+      }
+      .helper-row,
+      .auth-top,
+      .verify-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .verify-row .submit-btn {
+        flex-basis: auto;
+      }
+    }
+    @media (max-width: 560px) {
+      .auth-page {
+        padding: 10px;
+      }
+      .auth-shell,
+      .panel-frame {
+        border-radius: 22px;
+      }
+      .auth-panel,
+      .auth-scene,
+      .panel-frame {
+        padding: 18px;
+      }
+      .auth-tabs {
+        grid-template-columns: 1fr;
+        border-radius: 24px;
+      }
+      .auth-tab,
+      .submit-btn,
+      input {
+        border-radius: 16px;
+      }
+      .panel h2 {
+        font-size: 1.6rem;
+      }
+      .panel p,
+      .auth-note {
+        font-size: 14px;
+      }
+      .scene-title {
+        font-size: 42px;
+      }
+      .scene-desc {
+        font-size: 15px;
+      }
+      .scene-kicker {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+      }
+      .auth-scene {
+        min-height: 430px;
+      }
+      .scene-tree,
+      .scene-leaves {
+        display: none;
+      }
     }
   </style>
 </head>
@@ -445,9 +536,9 @@
                 </label>
               </div>
               <label>邮箱验证码
-                <div style="display: flex; gap: 10px;">
-                  <input id="registerVerifyCode" name="verifyCode" type="text" placeholder="输入6位验证码" maxlength="6" inputmode="numeric" required style="flex: 1;">
-                  <button type="button" id="sendVerifyCodeBtn" class="submit-btn" style="white-space: nowrap; padding: 16px 18px; min-width: 120px; font-size: 15px;">发送验证码</button>
+                <div class="verify-row">
+                  <input id="registerVerifyCode" name="verifyCode" type="text" placeholder="输入6位验证码" maxlength="6" inputmode="numeric" required>
+                  <button type="button" id="sendVerifyCodeBtn" class="submit-btn">发送验证码</button>
                 </div>
               </label>
               <div class="grid-two">

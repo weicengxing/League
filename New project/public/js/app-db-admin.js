@@ -64,6 +64,7 @@ const DB_FIELD_LABELS = {
 
 function initDbAdmin() {
   document.querySelector("#dbAdminBtn")?.addEventListener("click", openDbAdminPanel);
+  document.querySelector("#dbExportBtn")?.addEventListener("click", handleDbExport);
   document.querySelector("#dbTableList")?.addEventListener("click", handleDbTableSelect);
   document.querySelector("#dbScrollLeftBtn")?.addEventListener("click", () => scrollDbTable(-480));
   document.querySelector("#dbScrollRightBtn")?.addEventListener("click", () => scrollDbTable(480));
@@ -78,6 +79,10 @@ function initDbAdmin() {
 function openDbAdminPanel() {
   switchView("dbAdmin");
   loadDbTables();
+}
+
+function handleDbExport() {
+  triggerFileDownload("/api/db/export");
 }
 
 async function loadDbTables() {
@@ -305,6 +310,7 @@ function openDbAddModal() {
 function updateDbAdminVisibility() {
   const isSuperAdmin = currentUserRole() === "SuperAdmin";
   document.querySelector("#dbAdminBtn")?.classList.toggle("hidden", !isSuperAdmin);
+  document.querySelector("#dbExportBtn")?.classList.toggle("hidden", !isSuperAdmin);
   document.querySelector('[data-view="dbAdmin"]')?.classList.toggle("hidden", !isSuperAdmin);
   document.querySelector("#dbAdminGate")?.classList.toggle("hidden", isSuperAdmin);
   document.querySelector("#dbAdminLayout")?.classList.toggle("hidden", !isSuperAdmin);
