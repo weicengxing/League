@@ -180,6 +180,9 @@ identity_swap_request_review_lock = threading.Lock()
 WS_MAGIC_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 USER_MESSAGE_TABLE_ROW_LIMIT = 1_000_000
 GROUP_CHAT_MESSAGE_TABLE_ROW_LIMIT = 1_000_000
+MESSAGE_HISTORY_RETENTION_DAYS = 30
+GROUP_CHAT_INVITATION_RETENTION_DAYS = 30
+BACKGROUND_CLEANUP_INTERVAL_SECONDS = 60 * 60
 
 # Thread pool for async database writes
 db_executor = ThreadPoolExecutor(max_workers=2)
@@ -520,6 +523,255 @@ def list_group_chat_message_tables(connection, group_chat_id):
         if exists:
             table_names.append(table_name)
     return table_names
+
+
+def compact_group_chat_message_tables(connection, group_chat_id):
+    group_chat_id = int(group_chat_id)
+    ensure_group_chat_message_registry(connection)
+    registry_rows = connection.execute(
+        """
+        SELECT table_seq, row_count, created_at, updated_at
+        FROM group_chat_message_table_registry
+        WHERE group_chat_id = ?
+        ORDER BY table_seq ASC
+        """,
+        (group_chat_id,),
+    ).fetchall()
+
+    existing_tables = []
+    for row in registry_rows:
+        old_seq = int(row["table_seq"])
+        old_table_name = build_group_chat_message_table_name(group_chat_id, old_seq)
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (old_table_name,),
+        ).fetchone()
+        if not exists:
+            continue
+        actual_row_count = int(connection.execute(f'SELECT COUNT(*) AS count FROM "{old_table_name}"').fetchone()["count"])
+        if actual_row_count <= 0:
+            connection.execute(f'DROP TABLE IF EXISTS "{old_table_name}"')
+            continue
+        existing_tables.append(
+            {
+                "old_seq": old_seq,
+                "old_table_name": old_table_name,
+                "row_count": actual_row_count,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        )
+
+    if not existing_tables:
+        connection.execute(
+            "DELETE FROM group_chat_message_table_registry WHERE group_chat_id = ?",
+            (group_chat_id,),
+        )
+        return {"renamed_tables": 0, "removed_registry_rows": len(registry_rows)}
+
+    temp_names = []
+    for item in existing_tables:
+        temp_name = f"__tmp_group_chat_messages_{group_chat_id}_{item['old_seq']}"
+        connection.execute(f'ALTER TABLE "{item["old_table_name"]}" RENAME TO "{temp_name}"')
+        temp_names.append(temp_name)
+
+    renamed_tables = 0
+    timestamp = now_text()
+    connection.execute(
+        "DELETE FROM group_chat_message_table_registry WHERE group_chat_id = ?",
+        (group_chat_id,),
+    )
+
+    for index, item in enumerate(existing_tables, start=1):
+        final_table_name = build_group_chat_message_table_name(group_chat_id, index)
+        connection.execute(f'ALTER TABLE "{temp_names[index - 1]}" RENAME TO "{final_table_name}"')
+        connection.execute(
+            """
+            INSERT INTO group_chat_message_table_registry (group_chat_id, table_seq, row_count, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                group_chat_id,
+                index,
+                item["row_count"],
+                item["created_at"] or timestamp,
+                timestamp,
+            ),
+        )
+        if item["old_seq"] != index:
+            renamed_tables += 1
+
+    return {
+        "renamed_tables": renamed_tables,
+        "removed_registry_rows": max(0, len(registry_rows) - len(existing_tables)),
+    }
+
+
+def cleanup_expired_user_message_history(connection, cutoff_text):
+    ensure_user_message_registry(connection)
+    registry_rows = connection.execute(
+        """
+        SELECT user_id, table_seq
+        FROM user_message_table_registry
+        ORDER BY user_id ASC, table_seq ASC
+        """
+    ).fetchall()
+    deleted_rows = 0
+    dropped_tables = 0
+    for row in registry_rows:
+        user_id = int(row["user_id"])
+        table_seq = int(row["table_seq"])
+        table_name = build_user_message_table_name(user_id, table_seq)
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+        if not exists:
+            connection.execute(
+                "DELETE FROM user_message_table_registry WHERE user_id = ? AND table_seq = ?",
+                (user_id, table_seq),
+            )
+            continue
+
+        cursor = connection.execute(
+            f'DELETE FROM "{table_name}" WHERE created_at <= ?',
+            (cutoff_text,),
+        )
+        deleted_rows += int(cursor.rowcount or 0)
+        remaining_count = int(connection.execute(f'SELECT COUNT(*) AS count FROM "{table_name}"').fetchone()["count"])
+        if remaining_count > 0:
+            connection.execute(
+                """
+                UPDATE user_message_table_registry
+                SET row_count = ?, updated_at = ?
+                WHERE user_id = ? AND table_seq = ?
+                """,
+                (remaining_count, now_text(), user_id, table_seq),
+            )
+            continue
+
+        connection.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+        connection.execute(
+            "DELETE FROM user_message_table_registry WHERE user_id = ? AND table_seq = ?",
+            (user_id, table_seq),
+        )
+        dropped_tables += 1
+    return {"deleted_rows": deleted_rows, "dropped_tables": dropped_tables}
+
+
+def cleanup_expired_group_chat_history(connection, cutoff_text, invitation_cutoff_text=None):
+    ensure_group_chat_message_registry(connection)
+    registry_rows = connection.execute(
+        """
+        SELECT group_chat_id, table_seq
+        FROM group_chat_message_table_registry
+        ORDER BY group_chat_id ASC, table_seq ASC
+        """
+    ).fetchall()
+    deleted_message_rows = 0
+    dropped_message_tables = 0
+    compacted_groups = set()
+    renamed_tables = 0
+    removed_registry_rows = 0
+    for row in registry_rows:
+        group_chat_id = int(row["group_chat_id"])
+        table_seq = int(row["table_seq"])
+        table_name = build_group_chat_message_table_name(group_chat_id, table_seq)
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+        if not exists:
+            connection.execute(
+                "DELETE FROM group_chat_message_table_registry WHERE group_chat_id = ? AND table_seq = ?",
+                (group_chat_id, table_seq),
+            )
+            compacted_groups.add(group_chat_id)
+            continue
+
+        cursor = connection.execute(
+            f'DELETE FROM "{table_name}" WHERE created_at <= ?',
+            (cutoff_text,),
+        )
+        deleted_message_rows += int(cursor.rowcount or 0)
+        remaining_count = int(connection.execute(f'SELECT COUNT(*) AS count FROM "{table_name}"').fetchone()["count"])
+        if remaining_count > 0:
+            connection.execute(
+                """
+                UPDATE group_chat_message_table_registry
+                SET row_count = ?, updated_at = ?
+                WHERE group_chat_id = ? AND table_seq = ?
+                """,
+                (remaining_count, now_text(), group_chat_id, table_seq),
+            )
+            continue
+
+        connection.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+        connection.execute(
+            "DELETE FROM group_chat_message_table_registry WHERE group_chat_id = ? AND table_seq = ?",
+            (group_chat_id, table_seq),
+        )
+        dropped_message_tables += 1
+        compacted_groups.add(group_chat_id)
+
+    for group_chat_id in sorted(compacted_groups):
+        compact_result = compact_group_chat_message_tables(connection, group_chat_id)
+        renamed_tables += int(compact_result["renamed_tables"] or 0)
+        removed_registry_rows += int(compact_result["removed_registry_rows"] or 0)
+
+    invitation_cursor = connection.execute(
+        """
+        DELETE FROM group_chat_invitations
+        WHERE created_at <= ?
+        """,
+        (invitation_cutoff_text or cutoff_text,),
+    )
+    deleted_invitations = int(invitation_cursor.rowcount or 0)
+
+    group_ids = [
+        int(row["id"])
+        for row in connection.execute("SELECT id FROM group_chats").fetchall()
+    ]
+    for group_chat_id in group_ids:
+        last_message_at = None
+        last_preview = ""
+        last_sender_id = None
+        latest_message = None
+        for table_name in list_group_chat_message_tables(connection, group_chat_id):
+            row = connection.execute(
+                f'''
+                SELECT id, sender_user_id, message, created_at
+                FROM "{table_name}"
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                '''
+            ).fetchone()
+            if not row:
+                continue
+            if latest_message is None or (row["created_at"], int(row["id"])) > (latest_message["created_at"], int(latest_message["id"])):
+                latest_message = row
+
+        if latest_message:
+            last_message_at = latest_message["created_at"]
+            last_preview = str(latest_message["message"] or "")[:80]
+            last_sender_id = int(latest_message["sender_user_id"] or 0)
+        connection.execute(
+            """
+            UPDATE group_chats
+            SET last_message_at = ?, last_message_sender_user_id = ?, last_message_preview = ?
+            WHERE id = ?
+            """,
+            (last_message_at, last_sender_id, last_preview, group_chat_id),
+        )
+
+    return {
+        "deleted_message_rows": deleted_message_rows,
+        "dropped_message_tables": dropped_message_tables,
+        "deleted_invitations": deleted_invitations,
+        "compacted_groups": len(compacted_groups),
+        "renamed_tables": renamed_tables,
+        "removed_registry_rows": removed_registry_rows,
+    }
 
 
 class RichTextSanitizer(HTMLParser):

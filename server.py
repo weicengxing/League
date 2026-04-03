@@ -3,6 +3,8 @@ import hashlib
 import json
 import struct
 import threading
+import time
+from datetime import datetime, timedelta
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -10,6 +12,7 @@ from auth import initialize_auth_database, register_session_invalidation_notifie
 from alliance_server.mixins.api_routes import ApiRoutesMixin
 from alliance_server.mixins.core import CoreHandlerMixin
 from alliance_server.mixins.db_admin import DatabaseAdminMixin
+from alliance_server.mixins.group_chat_deletion import GroupChatDeletionMixin
 from alliance_server.mixins.group_chats import GroupChatsMixin
 from alliance_server.mixins.member_guild import MemberGuildMixin
 from alliance_server.mixins.profile_export import ProfileExportMixin
@@ -17,10 +20,15 @@ from alliance_server.mixins.review_requests import ReviewRequestsMixin
 from alliance_server.mixins.user_messages import UserMessagesMixin
 from alliance_server.shared import (
     HOST,
+    BACKGROUND_CLEANUP_INTERVAL_SECONDS,
+    GROUP_CHAT_INVITATION_RETENTION_DAYS,
+    MESSAGE_HISTORY_RETENTION_DAYS,
     PORT,
     WS_MAGIC_GUID,
     auth_ws_clients,
     auth_ws_clients_lock,
+    cleanup_expired_group_chat_history,
+    cleanup_expired_user_message_history,
     db_executor,
     initialize_database,
     now_text,
@@ -33,6 +41,7 @@ from alliance_server.shared import (
 class AllianceHandler(
     ApiRoutesMixin,
     DatabaseAdminMixin,
+    GroupChatDeletionMixin,
     GroupChatsMixin,
     MemberGuildMixin,
     ReviewRequestsMixin,
@@ -259,9 +268,50 @@ def create_melon_post(title, content, author_name, user_id=None):
     return melon_item
 
 
+def run_background_retention_cleanup():
+    while True:
+        cutoff = (datetime.now() - timedelta(days=MESSAGE_HISTORY_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        invitation_cutoff = (datetime.now() - timedelta(days=GROUP_CHAT_INVITATION_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with open_db() as connection:
+                user_message_result = cleanup_expired_user_message_history(connection, cutoff)
+                group_chat_result = cleanup_expired_group_chat_history(connection, cutoff, invitation_cutoff)
+                connection.commit()
+            if any(
+                value > 0
+                for value in [
+                    user_message_result["deleted_rows"],
+                    user_message_result["dropped_tables"],
+                    group_chat_result["deleted_message_rows"],
+                    group_chat_result["dropped_message_tables"],
+                    group_chat_result["deleted_invitations"],
+                    group_chat_result["renamed_tables"],
+                    group_chat_result["removed_registry_rows"],
+                ]
+            ):
+                print(
+                    "[cleanup]",
+                    f"cutoff<={cutoff}",
+                    f"user_messages={user_message_result['deleted_rows']}",
+                    f"user_tables={user_message_result['dropped_tables']}",
+                    f"group_messages={group_chat_result['deleted_message_rows']}",
+                    f"group_tables={group_chat_result['dropped_message_tables']}",
+                    f"group_invites={group_chat_result['deleted_invitations']}",
+                    f"compacted_groups={group_chat_result['compacted_groups']}",
+                    f"renamed_group_tables={group_chat_result['renamed_tables']}",
+                    f"removed_group_registry_rows={group_chat_result['removed_registry_rows']}",
+                    f"invite_retention_days={GROUP_CHAT_INVITATION_RETENTION_DAYS}",
+                )
+        except Exception as exc:
+            print(f"[cleanup] failed: {exc}")
+        time.sleep(BACKGROUND_CLEANUP_INTERVAL_SECONDS)
+
+
 def main():
     initialize_database()
     initialize_auth_database()
+    cleanup_thread = threading.Thread(target=run_background_retention_cleanup, daemon=True)
+    cleanup_thread.start()
     server = ThreadingHTTPServer((HOST, PORT), AllianceHandler)
     print(f"??????????????????: http://{HOST}:{PORT}")
     print("??????????? admin (SuperAdmin)")
