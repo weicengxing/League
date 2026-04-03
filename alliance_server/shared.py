@@ -775,7 +775,7 @@ def cleanup_expired_group_chat_history(connection, cutoff_text, invitation_cutof
 
 
 class RichTextSanitizer(HTMLParser):
-    allowed_tags = {"b", "strong", "i", "em", "u", "br", "p", "ul", "ol", "li", "a", "img"}
+    allowed_tags = {"b", "strong", "i", "em", "u", "br", "p", "ul", "ol", "li", "a", "img", "audio", "video"}
 
     def __init__(self):
         super().__init__()
@@ -788,7 +788,7 @@ class RichTextSanitizer(HTMLParser):
         if tag == "a":
             href = ""
             for key, value in attrs:
-                if key.lower() == "href" and isinstance(value, str) and value.startswith(("http://", "https://")):
+                if key.lower() == "href" and isinstance(value, str) and value.startswith(("/", "http://", "https://")):
                     href = html.escape(value, quote=True)
                     break
             if href:
@@ -805,6 +805,15 @@ class RichTextSanitizer(HTMLParser):
                     alt = html.escape(value, quote=True)
             if src:
                 self.parts.append(f'<img src="{src}" alt="{alt}">')
+            return
+        if tag in {"audio", "video"}:
+            src = ""
+            for key, value in attrs:
+                key_lower = str(key).lower()
+                if key_lower == "src" and isinstance(value, str) and value.startswith(("/", "http://", "https://")):
+                    src = html.escape(value, quote=True)
+            if src:
+                self.parts.append(f'<{tag} controls preload="metadata" src="{src}">')
             return
         self.parts.append(f"<{tag}>")
 

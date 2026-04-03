@@ -134,7 +134,28 @@ function renderStoredContent(content) {
   if (!/<[a-z][\s\S]*>/i.test(text)) {
     return escapeHtml(text).replace(/\n/g, "<br>");
   }
-  return text;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = text;
+  for (const link of [...wrapper.querySelectorAll("a[href]")]) {
+    const href = String(link.getAttribute("href") || "").trim();
+    const lowerHref = href.toLowerCase();
+    if (lowerHref.endsWith(".mp3")) {
+      const audio = document.createElement("audio");
+      audio.setAttribute("controls", "");
+      audio.setAttribute("preload", "metadata");
+      audio.setAttribute("src", href);
+      link.replaceWith(audio);
+      continue;
+    }
+    if (lowerHref.endsWith(".mp4")) {
+      const video = document.createElement("video");
+      video.setAttribute("controls", "");
+      video.setAttribute("preload", "metadata");
+      video.setAttribute("src", href);
+      link.replaceWith(video);
+    }
+  }
+  return wrapper.innerHTML;
 }
 
 function buildFeedSummary(content, maxLength = 88) {
@@ -223,6 +244,9 @@ function handleFeedListClick(event) {
       return;
     }
   }
+  if (rawTarget.closest("a[href], audio, video")) {
+    return;
+  }
   const previewTrigger = rawTarget.closest("[data-feed-preview]");
   if (previewTrigger instanceof HTMLElement) {
     const itemId = previewTrigger.dataset.feedPreview;
@@ -255,17 +279,28 @@ function syncMelonEditorValue() {
   }
 }
 
-function getPendingMelonImageObjectUrls(content = "") {
+const MELON_ALLOWED_FILE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".docx", ".txt", ".pptx", ".mp3", ".mp4"]);
+const MELON_ALLOWED_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+const MELON_ALLOWED_AUDIO_EXTENSIONS = new Set([".mp3"]);
+const MELON_ALLOWED_VIDEO_EXTENSIONS = new Set([".mp4"]);
+const MELON_MAX_FILE_SIZE = 50 * 1024 * 1024;
+
+function getPendingMelonAssetObjectUrls(content = "") {
   const wrapper = document.createElement("div");
   wrapper.innerHTML = String(content || "");
   return [...new Set(
-    [...wrapper.querySelectorAll("img")]
-      .map((image) => String(image.getAttribute("src") || "").trim())
-      .filter((src) => src.startsWith("blob:"))
+    [
+      ...[...wrapper.querySelectorAll("img")]
+        .map((image) => String(image.getAttribute("src") || "").trim()),
+      ...[...wrapper.querySelectorAll("a")]
+        .map((link) => String(link.getAttribute("href") || "").trim()),
+      ...[...wrapper.querySelectorAll("audio, video")]
+        .map((media) => String(media.getAttribute("src") || "").trim()),
+    ].filter((src) => src.startsWith("blob:"))
   )];
 }
 
-function cleanupPendingMelonImages(targets) {
+function cleanupPendingMelonAssets(targets) {
   const values = [...new Set((targets || []).filter(Boolean))];
   for (const value of values) {
     let entryKey = "";
@@ -291,7 +326,7 @@ function cleanupPendingMelonImages(targets) {
 
 function resetMelonEditor({ cleanup = true } = {}) {
   const currentHtml = melonRichEditor?.getHtml?.() || els.melonContent?.value || "";
-  const objectUrls = cleanup ? getPendingMelonImageObjectUrls(currentHtml) : [];
+  const objectUrls = cleanup ? getPendingMelonAssetObjectUrls(currentHtml) : [];
   if (melonRichEditor) {
     melonRichEditor.setHtml("");
   }
@@ -299,7 +334,7 @@ function resetMelonEditor({ cleanup = true } = {}) {
     els.melonContent.value = "";
   }
   if (cleanup && objectUrls.length) {
-    cleanupPendingMelonImages(objectUrls);
+    cleanupPendingMelonAssets(objectUrls);
   }
 }
 
@@ -321,9 +356,48 @@ function validateMelonImageFile(file) {
   if (!String(file.type || "").startsWith("image/")) {
     throw new Error("仅支持图片文件");
   }
-  if (file.size > 10 * 1024 * 1024) {
-    throw new Error("图片不能超过 10MB");
+  if (file.size > MELON_MAX_FILE_SIZE) {
+    throw new Error("文件不能超过 50MB");
   }
+}
+
+function validateMelonAssetFile(file) {
+  if (!file) throw new Error("请选择文件");
+  const name = String(file.name || "");
+  const suffix = name.includes(".") ? `.${name.split(".").pop().toLowerCase()}` : "";
+  if (!MELON_ALLOWED_FILE_EXTENSIONS.has(suffix)) {
+    throw new Error("仅支持图片、PDF、DOCX、TXT、PPTX、MP3、MP4");
+  }
+  if (file.size > MELON_MAX_FILE_SIZE) {
+    throw new Error("文件不能超过 50MB");
+  }
+}
+
+async function createMelonObjectUrl(file) {
+  const name = String(file?.name || "");
+  const suffix = name.includes(".") ? `.${name.split(".").pop().toLowerCase()}` : "";
+  let mimeType = String(file?.type || "").trim() || "application/octet-stream";
+  if (suffix === ".txt") {
+    const buffer = await file.arrayBuffer();
+    let text = "";
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    } catch {
+      try {
+        text = new TextDecoder("gb18030").decode(buffer);
+      } catch {
+        text = new TextDecoder("utf-8").decode(buffer);
+      }
+    }
+    return URL.createObjectURL(new Blob([text], { type: "text/plain; charset=utf-8" }));
+  } else if (suffix === ".pdf") {
+    mimeType = "application/pdf";
+  } else if (suffix === ".mp3") {
+    mimeType = "audio/mpeg";
+  } else if (suffix === ".mp4") {
+    mimeType = "video/mp4";
+  }
+  return URL.createObjectURL(new Blob([file], { type: mimeType }));
 }
 
 function buildPendingMelonImageSrc(tempId) {
@@ -343,11 +417,74 @@ function insertMelonImageFromFile(file) {
   toast("图片已插入");
 }
 
+function insertMelonFileLink(url, fileName = "附件") {
+  if (!melonRichEditor || !url) return;
+  const safeUrl = escapeHtml(String(url));
+  const safeName = escapeHtml(String(fileName || "附件"));
+  const html = `<p><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeName}</a></p>`;
+  if (typeof melonRichEditor.dangerouslyInsertHtml === "function") {
+    melonRichEditor.dangerouslyInsertHtml(html);
+  } else if (typeof melonRichEditor.getHtml === "function" && typeof melonRichEditor.setHtml === "function") {
+    melonRichEditor.setHtml(`${melonRichEditor.getHtml() || ""}${html}`);
+  }
+  syncMelonEditorValue();
+}
+
+function insertMelonMedia(url, fileName = "附件", kind = "file") {
+  if (!melonRichEditor || !url) return;
+  const safeUrl = escapeHtml(String(url));
+  const safeName = escapeHtml(String(fileName || "附件"));
+  let html = "";
+  if (kind === "audio") {
+    html = `<p><audio controls preload="metadata" src="${safeUrl}">${safeName}</audio></p>`;
+  } else if (kind === "video") {
+    html = `<p><video controls preload="metadata" src="${safeUrl}"></video></p>`;
+  } else {
+    html = `<p><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeName}</a></p>`;
+  }
+  if (typeof melonRichEditor.dangerouslyInsertHtml === "function") {
+    melonRichEditor.dangerouslyInsertHtml(html);
+  } else if (typeof melonRichEditor.getHtml === "function" && typeof melonRichEditor.setHtml === "function") {
+    melonRichEditor.setHtml(`${melonRichEditor.getHtml() || ""}${html}`);
+  }
+  syncMelonEditorValue();
+}
+
+async function insertMelonAssetFromFile(file) {
+  validateMelonAssetFile(file);
+  const tempId = `melon_temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const objectUrl = await createMelonObjectUrl(file);
+  const suffix = String(file.name || "").includes(".") ? `.${String(file.name).split(".").pop().toLowerCase()}` : "";
+  const kind = String(file.type || "").startsWith("image/")
+    ? "image"
+    : MELON_ALLOWED_AUDIO_EXTENSIONS.has(suffix)
+      ? "audio"
+      : MELON_ALLOWED_VIDEO_EXTENSIONS.has(suffix)
+        ? "video"
+        : "file";
+  pendingMelonImageFiles.set(tempId, {
+    file,
+    objectUrl,
+    alt: file?.name || "附件",
+    kind,
+  });
+  if (kind === "image") {
+    insertMelonImage(objectUrl, file?.name || "瓜棚图片");
+    toast("图片已插入");
+    return;
+  }
+  insertMelonFileLink(objectUrl, file?.name || "附件");
+  toast(kind === "audio" ? "音频已插入" : kind === "video" ? "视频已插入" : "附件已插入");
+}
+
 function prepareMelonContentForSubmit(content) {
   const wrapper = document.createElement("div");
   wrapper.innerHTML = String(content || "");
   const images = [...wrapper.querySelectorAll("img")];
-  const pendingImages = [];
+  const links = [...wrapper.querySelectorAll("a")];
+  const audios = [...wrapper.querySelectorAll("audio")];
+  const videos = [...wrapper.querySelectorAll("video")];
+  const pendingFiles = [];
   for (const image of images) {
     const src = String(image.getAttribute("src") || "").trim();
     if (!src.startsWith("blob:")) continue;
@@ -359,29 +496,73 @@ function prepareMelonContentForSubmit(content) {
     validateMelonImageFile(pending.file);
     image.setAttribute("src", buildPendingMelonImageSrc(tempId));
     image.setAttribute("alt", image.getAttribute("alt") || pending.alt || "瓜棚图片");
-    pendingImages.push({
+    pendingFiles.push({
       tempId,
       file: pending.file,
       alt: image.getAttribute("alt") || pending.alt || "瓜棚图片",
     });
   }
+  for (const link of links) {
+    const href = String(link.getAttribute("href") || "").trim();
+    if (!href.startsWith("blob:")) continue;
+    const pendingEntry = [...pendingMelonImageFiles.entries()].find(([, value]) => value?.objectUrl === href);
+    const [tempId, pending] = pendingEntry || [];
+    if (!tempId || !pending?.file) {
+      throw new Error("存在未准备好的附件，请重新插入后再试");
+    }
+    validateMelonAssetFile(pending.file);
+    link.setAttribute("href", buildPendingMelonImageSrc(tempId));
+    if (!link.textContent?.trim()) {
+      link.textContent = pending.file.name || "附件";
+    }
+    pendingFiles.push({
+      tempId,
+      file: pending.file,
+      alt: link.textContent || pending.file.name || "附件",
+    });
+  }
+  for (const media of [...audios, ...videos]) {
+    const src = String(media.getAttribute("src") || "").trim();
+    if (!src.startsWith("blob:")) continue;
+    const pendingEntry = [...pendingMelonImageFiles.entries()].find(([, value]) => value?.objectUrl === src);
+    const [tempId, pending] = pendingEntry || [];
+    if (!tempId || !pending?.file) {
+      throw new Error("存在未准备好的媒体文件，请重新插入后再试");
+    }
+    validateMelonAssetFile(pending.file);
+    media.setAttribute("src", buildPendingMelonImageSrc(tempId));
+    pendingFiles.push({
+      tempId,
+      file: pending.file,
+      alt: pending.file.name || "媒体文件",
+    });
+  }
   return {
     content: wrapper.innerHTML,
-    pendingImages,
+    pendingImages: pendingFiles,
   };
 }
 
 async function handleMelonClipboardPaste(event) {
   const items = Array.from(event?.clipboardData?.items || []);
-  const imageItem = items.find((item) => String(item.type || "").startsWith("image/"));
-  if (!imageItem) return;
+  const fileItem = items.find((item) => {
+    const type = String(item.type || "").toLowerCase();
+    return type.startsWith("image/")
+      || type === "application/pdf"
+      || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      || type === "text/plain"
+      || type === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+      || type === "audio/mpeg"
+      || type === "video/mp4";
+  });
+  if (!fileItem) return;
   event.preventDefault();
-  const file = imageItem.getAsFile();
+  const file = fileItem.getAsFile();
   if (!file) return;
   try {
-    insertMelonImageFromFile(file);
+    await insertMelonAssetFromFile(file);
   } catch (error) {
-    toast(error.message || "图片粘贴失败");
+    toast(error.message || "文件粘贴失败");
   }
 }
 
@@ -393,17 +574,35 @@ async function handleMelonPasteImageClick() {
   try {
     const clipboardItems = await navigator.clipboard.read();
     for (const item of clipboardItems) {
-      const imageType = item.types.find((type) => type.startsWith("image/"));
-      if (!imageType) continue;
-      const blob = await item.getType(imageType);
-      const extension = imageType.split("/")[1] || "png";
-      const file = new File([blob], `melon-paste.${extension}`, { type: imageType });
-      insertMelonImageFromFile(file);
+      const supportedType = item.types.find((type) =>
+        type.startsWith("image/")
+        || type === "application/pdf"
+        || type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        || type === "text/plain"
+        || type === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        || type === "audio/mpeg"
+        || type === "video/mp4"
+      );
+      if (!supportedType) continue;
+      const blob = await item.getType(supportedType);
+      const extensionMap = {
+        "application/pdf": "pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "text/plain": "txt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+        "audio/mpeg": "mp3",
+        "video/mp4": "mp4",
+      };
+      const extension = supportedType.startsWith("image/")
+        ? (supportedType.split("/")[1] || "png")
+        : (extensionMap[supportedType] || "bin");
+      const file = new File([blob], `melon-paste.${extension}`, { type: supportedType });
+      await insertMelonAssetFromFile(file);
       return;
     }
-    toast("剪贴板中没有图片");
+    toast("剪贴板中没有可粘贴的图片或文件");
   } catch (error) {
-    toast(error.message || "读取剪贴板失败，请确认已复制图片并允许访问剪贴板");
+    toast(error.message || "读取剪贴板失败，请确认已复制图片或文件并允许访问剪贴板");
   }
 }
 
@@ -411,9 +610,9 @@ async function handleMelonImageSelected(event) {
   const file = event?.target?.files?.[0];
   if (!file) return;
   try {
-    insertMelonImageFromFile(file);
+    await insertMelonAssetFromFile(file);
   } catch (error) {
-    toast(error.message || "图片上传失败");
+    toast(error.message || "文件上传失败");
   } finally {
     if (event?.target) {
       event.target.value = "";

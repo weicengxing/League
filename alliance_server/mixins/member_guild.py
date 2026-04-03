@@ -533,9 +533,9 @@ class MemberGuildMixin:
         author_name = user.get("username") or user.get("display_name") or "匿名用户"
         user_id = user.get("id") or user.get("admin_id")
         try:
-            content = self.finalize_melon_content_images(
+            content = self.finalize_melon_content_assets(
                 payload.get("content", ""),
-                payload.get("image_files", []),
+                payload.get("asset_files", []),
                 user_id,
             )
         except ValueError as exc:
@@ -592,7 +592,7 @@ class MemberGuildMixin:
             self.send_json({"error": "图片参数无效"}, status=HTTPStatus.BAD_REQUEST)
             return None
 
-        image_files = []
+        asset_files = []
         seen_temp_ids = set()
         for item in images_meta:
             if not isinstance(item, dict):
@@ -608,7 +608,7 @@ class MemberGuildMixin:
             if file_item is None or getattr(file_item, "file", None) is None:
                 self.send_json({"error": "图片数据不完整"}, status=HTTPStatus.BAD_REQUEST)
                 return None
-            image_files.append({
+            asset_files.append({
                 "temp_id": temp_id,
                 "alt": alt,
                 "file_item": file_item,
@@ -618,7 +618,7 @@ class MemberGuildMixin:
         return {
             "title": title,
             "content": content,
-            "image_files": image_files,
+            "asset_files": asset_files,
         }
 
     def get_pending_melon_image_placeholders(self, content):
@@ -637,17 +637,20 @@ class MemberGuildMixin:
             placeholders.append((relative, temp_id))
         return placeholders
 
-    def save_melon_content_image(self, *, file_item, user_id, timestamp, index):
+    def save_melon_content_asset(self, *, file_item, user_id, timestamp, index):
         raw = file_item.file.read()
         if not raw:
-            raise ValueError("图片文件不能为空")
-        if len(raw) > 10 * 1024 * 1024:
-            raise ValueError("图片不能超过 10MB")
+            raise ValueError("附件文件不能为空")
 
         filename = Path(getattr(file_item, "filename", "") or "")
         suffix = filename.suffix.lower()
-        if suffix not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
-            raise ValueError("仅支持 png、jpg、jpeg、gif、webp 图片")
+        image_suffixes = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+        document_suffixes = {".pdf", ".docx", ".txt", ".pptx", ".mp3", ".mp4"}
+        allowed_suffixes = image_suffixes | document_suffixes
+        if suffix not in allowed_suffixes:
+            raise ValueError("仅支持图片、PDF、DOCX、TXT、PPTX")
+        if len(raw) > (10 * 1024 * 1024 if suffix in image_suffixes else 20 * 1024 * 1024):
+            raise ValueError("图片不能超过 10MB" if suffix in image_suffixes else "文档不能超过 20MB")
 
         safe_user_id = user_id or "guest"
         relative_path = f"/uploads/melon/melon-{safe_user_id}-{timestamp}-{index}{suffix}"
@@ -656,7 +659,7 @@ class MemberGuildMixin:
         target_path.write_bytes(raw)
         return relative_path
 
-    def finalize_melon_content_images(self, content, image_files, user_id):
+    def finalize_melon_content_assets(self, content, asset_files, user_id):
         text = str(content or "")
         placeholders = self.get_pending_melon_image_placeholders(text)
         if not placeholders:
@@ -664,17 +667,17 @@ class MemberGuildMixin:
 
         finalized = text
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        image_lookup = {
+        asset_lookup = {
             str(item.get("temp_id", "")).strip(): item
-            for item in (image_files or [])
+            for item in (asset_files or [])
             if isinstance(item, dict)
         }
         for index, (placeholder, temp_id) in enumerate(placeholders, start=1):
-            image_item = image_lookup.get(temp_id)
-            if not image_item:
-                raise ValueError("发布内容中的图片数据不完整，请重新插入后再试")
-            final_relative = self.save_melon_content_image(
-                file_item=image_item["file_item"],
+            asset_item = asset_lookup.get(temp_id)
+            if not asset_item:
+                raise ValueError("发布内容中的附件数据不完整，请重新插入后再试")
+            final_relative = self.save_melon_content_asset(
+                file_item=asset_item["file_item"],
                 user_id=user_id,
                 timestamp=timestamp,
                 index=index,

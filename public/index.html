@@ -149,9 +149,10 @@
                 <div id="melonToolbar" class="rich-editor__toolbar"></div>
                 <div id="melonEditor" class="rich-editor__surface"></div>
               </div>
+              <p class="melon-post-form__hint">支持粘贴或上传：图片、TXT、PDF、DOCX、PPTX、MP3、MP4</p>
               <textarea id="melonContent" rows="2" placeholder="分享新鲜事..." required class="hidden"></textarea>
               <div class="melon-post-form__actions">
-                <button id="melonPasteImageBtn" type="button" class="ghost-btn">粘贴图片</button>
+                <button id="melonPasteImageBtn" type="button" class="ghost-btn">粘贴文件</button>
                 <button type="submit" class="primary-btn">发布</button>
               </div>
             </form>
@@ -742,7 +743,7 @@
 
   <input id="memberScreenshotInput" type="file" accept="image/*" class="hidden">
   <input id="profileAvatarInput" type="file" accept="image/*" class="hidden">
-  <input id="melonImageInput" type="file" accept="image/*" class="hidden">
+  <input id="melonImageInput" type="file" accept="image/*,audio/mpeg,video/mp4,.pdf,.docx,.txt,.pptx,.mp3,.mp4,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,application/vnd.openxmlformats-officedocument.presentationml.presentation" class="hidden">
 
   <div id="dangerConfirmModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="danger-confirm"></div>

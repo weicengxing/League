@@ -1193,9 +1193,9 @@ function bindEvents() {
   }
   window.addEventListener("beforeunload", () => {
     const currentHtml = melonRichEditor?.getHtml?.() || els.melonContent?.value || "";
-    const objectUrls = getPendingMelonImageObjectUrls(currentHtml);
+    const objectUrls = getPendingMelonAssetObjectUrls(currentHtml);
     if (objectUrls.length) {
-      cleanupPendingMelonImages(objectUrls);
+      cleanupPendingMelonAssets(objectUrls);
     }
   });
   

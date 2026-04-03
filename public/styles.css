@@ -1175,6 +1175,15 @@ button {
   min-width: 120px;
 }
 
+.melon-post-form__hint {
+  margin: -2px 2px 2px;
+  color: #b48a1f;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 rgba(255, 248, 220, 0.5);
+}
+
 .rich-editor {
   display: grid;
   gap: 0;

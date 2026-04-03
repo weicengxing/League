@@ -115,17 +115,82 @@ class CoreHandlerMixin:
             content_type = "application/javascript; charset=utf-8"
         elif resolved.suffix == ".json":
             content_type = "application/json; charset=utf-8"
+        elif resolved.suffix == ".txt":
+            content_type = "text/plain; charset=utf-8"
+        elif resolved.suffix == ".pdf":
+            content_type = "application/pdf"
+        elif resolved.suffix == ".docx":
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif resolved.suffix == ".pptx":
+            content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        elif resolved.suffix == ".mp3":
+            content_type = "audio/mpeg"
+        elif resolved.suffix == ".mp4":
+            content_type = "video/mp4"
         elif resolved.suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
             content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
 
-        self.send_response(HTTPStatus.OK)
+        file_size = resolved.stat().st_size
+        range_header = (self.headers.get("Range") or "").strip()
+        start = 0
+        end = file_size - 1
+        status = HTTPStatus.OK
+        if range_header:
+            parsed_range = self.parse_http_range(range_header, file_size)
+            if parsed_range is None:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{file_size}")
+                self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+                return
+            start, end = parsed_range
+            status = HTTPStatus.PARTIAL_CONTENT
+
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(max(0, end - start + 1)))
+        if status == HTTPStatus.PARTIAL_CONTENT:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
         if resolved.suffix in {".html", ".css", ".js"}:
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
             self.send_header("Pragma", "no-cache")
             self.send_header("Expires", "0")
         self.end_headers()
-        self.wfile.write(resolved.read_bytes())
+        with resolved.open("rb") as handle:
+            handle.seek(start)
+            remaining = max(0, end - start + 1)
+            while remaining > 0:
+                chunk = handle.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
+    def parse_http_range(self, range_header, file_size):
+        if not range_header.startswith("bytes="):
+            return None
+        value = range_header[6:].strip()
+        if "," in value:
+            return None
+        start_text, sep, end_text = value.partition("-")
+        if not sep:
+            return None
+        try:
+            if start_text == "":
+                suffix_length = int(end_text)
+                if suffix_length <= 0:
+                    return None
+                start = max(file_size - suffix_length, 0)
+                end = file_size - 1
+            else:
+                start = int(start_text)
+                end = file_size - 1 if end_text == "" else int(end_text)
+        except ValueError:
+            return None
+        if file_size <= 0 or start < 0 or end < start or start >= file_size:
+            return None
+        return start, min(end, file_size - 1)
 
     def handle_melon_websocket_upgrade(self):
         upgrade_header = (self.headers.get("Upgrade") or "").lower()
