@@ -461,6 +461,190 @@
         display: none;
       }
     }
+    @media (max-width: 1024px) {
+      .auth-page {
+        align-items: flex-start;
+        padding: 18px;
+      }
+      .auth-shell {
+        width: min(100%, 760px);
+        grid-template-columns: 1fr;
+      }
+      .auth-scene {
+        min-height: 440px;
+        padding: 34px 30px 150px;
+      }
+      .scene-copy {
+        max-width: none;
+      }
+      .scene-stats {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .scene-tree {
+        width: 250px;
+        height: 280px;
+        bottom: 18px;
+      }
+      .tree-crown {
+        left: 28px;
+        width: 194px;
+        height: 154px;
+      }
+      .tree-trunk {
+        left: 96px;
+        top: 112px;
+        width: 58px;
+        height: 138px;
+      }
+      .tree-ring {
+        left: 74px;
+        top: 194px;
+        width: 118px;
+      }
+    }
+    @media (max-width: 720px) {
+      .auth-page {
+        padding: 12px;
+      }
+      .auth-shell {
+        border-radius: 24px;
+      }
+      .auth-panel,
+      .auth-scene {
+        padding: 18px;
+      }
+      .panel-frame {
+        padding: 18px;
+        border-radius: 24px;
+      }
+      .auth-top {
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      .brand-seal {
+        width: 46px;
+        height: 46px;
+        border-radius: 16px;
+        font-size: 22px;
+      }
+      .auth-scene {
+        min-height: auto;
+        padding-bottom: 22px;
+      }
+      .scene-title {
+        margin: 18px 0 12px;
+        font-size: clamp(42px, 15vw, 58px);
+      }
+      .scene-desc {
+        font-size: 15px;
+        line-height: 1.75;
+      }
+      .scene-stats {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-top: 22px;
+      }
+      .scene-stat {
+        padding: 14px 16px;
+        border-radius: 18px;
+      }
+      .scene-tree,
+      .tree-ring,
+      .scene-leaves {
+        display: none;
+      }
+      .auth-tabs {
+        gap: 8px;
+        padding: 6px;
+      }
+      .auth-tab {
+        padding: 14px 16px;
+        font-size: 16px;
+      }
+      .panel h2 {
+        font-size: 24px;
+        line-height: 1.3;
+      }
+      form {
+        gap: 14px;
+        margin-top: 18px;
+      }
+      input,
+      .submit-btn {
+        min-height: 52px;
+      }
+      .helper-row {
+        gap: 8px;
+        font-size: 13px;
+      }
+    }
+    @media (max-width: 480px) {
+      .auth-page {
+        padding: 8px;
+      }
+      .auth-shell,
+      .panel-frame {
+        border-radius: 20px;
+      }
+      .auth-panel,
+      .auth-scene,
+      .panel-frame {
+        padding: 16px;
+      }
+      .auth-tabs {
+        grid-template-columns: 1fr 1fr;
+      }
+      .auth-tab {
+        min-height: 48px;
+        padding: 12px 10px;
+        font-size: 15px;
+      }
+      .scene-kicker {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+      }
+      .scene-title {
+        font-size: 38px;
+      }
+      .panel h2 {
+        font-size: 1.95rem;
+      }
+      .panel p,
+      .auth-note,
+      label {
+        font-size: 14px;
+      }
+      .verify-row {
+        gap: 8px;
+      }
+      .verify-row .submit-btn {
+        min-height: 48px;
+        padding: 12px 14px;
+      }
+      .grid-two,
+      .grid-two--compact {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+    }
+    @media (max-width: 380px) {
+      .auth-top {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .auth-tabs {
+        grid-template-columns: 1fr;
+      }
+      .auth-tab,
+      .submit-btn,
+      input {
+        border-radius: 14px;
+      }
+      .panel h2 {
+        font-size: 1.7rem;
+      }
+    }
   </style>
 </head>
 <body>

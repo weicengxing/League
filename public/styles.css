@@ -3280,6 +3280,585 @@ td {
     min-width: 960px;
   }
 }
+
+@media (max-width: 980px) {
+  .board-page {
+    width: min(100% - 28px, 1240px);
+  }
+
+  .board-top {
+    gap: 16px;
+  }
+
+  .board-top__actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(154px, 1fr));
+    align-self: stretch;
+  }
+
+  .board-top__actions .ghost-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .side-filter {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 14px;
+    border-radius: 24px;
+  }
+
+  .side-filter__summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .panel-card__head,
+  .hill-section__bar,
+  .hill-browse-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .panel-toolbar {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .panel-toolbar > * {
+    flex: 1 1 180px;
+  }
+
+  .guild-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .guild-card__title-row {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .board-page {
+    width: calc(100% - 20px);
+  }
+
+  .board-top__actions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+
+  .board-top__actions .ghost-btn {
+    width: auto;
+    min-width: max-content;
+    flex: 0 0 auto;
+    min-height: 44px;
+    padding: 0 12px;
+    border-radius: 14px;
+    font-size: 0.94rem;
+  }
+
+  .board-top__actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .top-pills {
+    display: flex;
+    overflow-x: auto;
+    gap: 10px;
+    padding-bottom: 4px;
+    scroll-snap-type: x proximity;
+  }
+
+  .top-pills__btn {
+    min-width: 138px;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
+  .side-filter {
+    padding: 10px;
+    border-radius: 20px;
+  }
+
+  .side-filter__search-row,
+  .side-filter__action-row {
+    padding: 8px;
+  }
+
+  .side-filter__summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .side-filter__summary-card {
+    gap: 6px;
+    padding: 12px;
+  }
+
+  .side-filter__summary-card span {
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+  }
+
+  .side-filter__summary-card strong {
+    font-size: 1.1rem;
+  }
+
+  .hill-section__head {
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+
+  .guild-card-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .guild-card {
+    gap: 10px;
+  }
+
+  .guild-card__title-row {
+    padding-right: 56px;
+  }
+
+  .guild-card__leader {
+    gap: 4px;
+  }
+
+  .member-form--guild {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+
+  .member-form__actions {
+    justify-content: stretch;
+  }
+
+  .member-form__actions .primary-btn {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .board-page {
+    width: calc(100% - 14px);
+    padding-top: 12px;
+  }
+
+  .board-top h1 {
+    font-size: 1.9rem;
+  }
+
+  .board-eyebrow {
+    font-size: 0.74rem;
+    letter-spacing: 0.16em;
+  }
+
+  .board-top {
+    margin-bottom: 18px;
+  }
+
+  .top-pills__btn {
+    min-width: 124px;
+    min-height: 46px;
+    padding: 0 14px;
+    font-size: 0.9rem;
+  }
+
+  .panel-card {
+    padding: 14px;
+    border-radius: 20px;
+  }
+
+  .panel-card__head h2,
+  .hill-section__head h2 {
+    font-size: 1.45rem;
+  }
+
+  .side-filter__search-row {
+    grid-template-columns: minmax(0, 1fr) 46px;
+  }
+
+  .side-filter__summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .side-filter__summary-card {
+    padding: 10px 12px;
+  }
+
+  .guild-card {
+    padding: 14px 14px 12px;
+  }
+
+  .guild-card h3 {
+    font-size: 1.22rem;
+    line-height: 1.25;
+  }
+
+  .guild-card__power-label {
+    font-size: 0.98rem;
+  }
+
+  .guild-card__power-label strong {
+    font-size: 1.2rem;
+  }
+
+  .guild-card__leader,
+  .detail-member-card,
+  .ranking-item {
+    border-radius: 12px;
+  }
+}
+
+@media (max-width: 420px) {
+  .board-top__actions {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .top-pills__btn {
+    min-width: 116px;
+  }
+
+  .board-top__actions .ghost-btn {
+    min-height: 40px;
+    padding: 0 11px;
+    border-radius: 12px;
+    font-size: 0.88rem;
+  }
+
+  .side-filter {
+    padding: 8px;
+    border-radius: 18px;
+  }
+
+  .side-filter__search-row,
+  .side-filter__action-row {
+    padding: 6px;
+  }
+
+  .side-filter input,
+  .side-filter select {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+
+  .side-filter input,
+  .side-filter select,
+  .side-filter textarea,
+  .member-form input,
+  .member-form select,
+  .announcement-form input,
+  .announcement-form select,
+  .announcement-form textarea {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 760px) {
+  .board-top,
+  .board-top__brand,
+  .board-top__actions,
+  .top-pills,
+  .side-filter,
+  .main-board,
+  .hill-board-list,
+  .hill-section,
+  .guild-card-grid,
+  .hill-pagination {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .top-pills {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 10px;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .top-pills::-webkit-scrollbar,
+  .side-filter__summary-grid::-webkit-scrollbar,
+  .guild-card-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .top-pills__btn {
+    width: auto;
+    min-width: 132px;
+    flex: 0 0 auto;
+    padding: 0 18px;
+    scroll-snap-align: start;
+  }
+
+  .side-filter__action-row {
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 0.72fr);
+  }
+
+  .side-filter__summary-grid {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 2px;
+    scroll-snap-type: x proximity;
+  }
+
+  .side-filter__summary-card {
+    min-width: 144px;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
+  .guild-card-grid {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 12px;
+    padding-bottom: 4px;
+    scroll-snap-type: x proximity;
+  }
+
+  .guild-card {
+    min-width: min(332px, calc(100vw - 52px));
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
+  .hill-pagination {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+  }
+
+  .hill-pagination__btn,
+  .hill-pagination__info {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .top-pills__btn {
+    min-width: 122px;
+    min-height: 44px;
+    padding: 0 16px;
+    font-size: 0.88rem;
+  }
+
+  .side-filter__action-row {
+    grid-template-columns: 1fr;
+  }
+
+  .side-filter__summary-card {
+    min-width: 132px;
+    padding: 10px 12px;
+  }
+
+  .guild-card {
+    min-width: min(300px, calc(100vw - 40px));
+  }
+
+  .hill-pagination {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .top-pills__btn {
+    min-width: 114px;
+    padding: 0 14px;
+  }
+
+  .side-filter__summary-card {
+    min-width: 124px;
+  }
+
+  .guild-card {
+    min-width: min(278px, calc(100vw - 28px));
+  }
+}
+
+@media (max-width: 760px) {
+  .hill-pagination {
+    display: grid;
+    grid-template-columns: minmax(88px, 1fr) auto minmax(88px, 1fr);
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    flex-wrap: nowrap;
+  }
+
+  .hill-pagination__btn,
+  .hill-pagination__info {
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    text-align: center;
+  }
+
+  .hill-pagination__btn {
+    min-width: 0;
+    padding: 0 12px;
+  }
+
+  .hill-pagination__info {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 420px) {
+  .hill-pagination {
+    grid-template-columns: minmax(72px, 1fr) auto minmax(72px, 1fr);
+    gap: 6px;
+  }
+
+  .hill-pagination__btn {
+    padding: 0 10px;
+    font-size: 0.92rem;
+  }
+
+  .hill-pagination__info {
+    font-size: 0.9rem;
+    padding: 10px 10px;
+  }
+}
+
+@media (max-width: 760px) and (min-width: 421px) {
+  .side-filter {
+    grid-template-columns: minmax(0, 1.6fr) minmax(190px, 0.9fr);
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .side-filter__panel--search,
+  .side-filter__panel--summary {
+    min-width: 0;
+  }
+
+  .side-filter__search-row {
+    grid-template-columns: minmax(0, 1fr) 58px;
+  }
+
+  .side-filter__action-row {
+    grid-template-columns: minmax(0, 1fr) minmax(120px, 0.9fr);
+  }
+
+  .side-filter__summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    height: 100%;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .side-filter__summary-card {
+    min-width: 0;
+    padding: 10px 12px;
+    align-content: center;
+  }
+
+  .side-filter__summary-card span {
+    font-size: 0.68rem;
+    letter-spacing: 0.03em;
+  }
+
+  .side-filter__summary-card strong {
+    font-size: 0.98rem;
+    line-height: 1.05;
+  }
+}
+
+@media (max-width: 760px) {
+  .side-filter {
+    grid-template-columns: minmax(0, 1.45fr) minmax(168px, 0.95fr);
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .side-filter__panel--search,
+  .side-filter__panel--summary,
+  .side-filter__summary-grid {
+    min-width: 0;
+  }
+
+  .side-filter__search-row {
+    grid-template-columns: minmax(0, 1fr) 56px;
+  }
+
+  .side-filter__action-row {
+    grid-template-columns: minmax(0, 1fr) minmax(116px, 0.88fr);
+  }
+
+  .side-filter__summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    overflow: visible;
+    padding-bottom: 0;
+    height: 100%;
+  }
+
+  .side-filter__summary-card {
+    min-width: 0;
+    padding: 10px 10px;
+    border-radius: 16px;
+  }
+
+  .side-filter__summary-card span {
+    font-size: 0.66rem;
+    letter-spacing: 0.02em;
+  }
+
+  .side-filter__summary-card strong {
+    font-size: 0.94rem;
+    line-height: 1.05;
+    word-break: break-word;
+  }
+}
+
+@media (max-width: 480px) {
+  .side-filter {
+    grid-template-columns: minmax(0, 1.32fr) minmax(150px, 0.98fr);
+    gap: 8px;
+  }
+
+  .side-filter__search-row {
+    grid-template-columns: minmax(0, 1fr) 52px;
+  }
+
+  .side-filter__action-row {
+    grid-template-columns: minmax(0, 1fr) 102px;
+  }
+
+  .side-filter__summary-card {
+    padding: 9px 8px;
+  }
+
+  .side-filter__summary-card span {
+    font-size: 0.62rem;
+  }
+
+  .side-filter__summary-card strong {
+    font-size: 0.88rem;
+  }
+}
 .profile-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
