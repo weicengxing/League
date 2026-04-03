@@ -183,3 +183,29 @@ Generate short report from ONLY the kluster tool calls made **in the current tur
 
 ### ENFORCEMENT
 If you complete a response without providing this summary when kluster tools were used in the current turn AND no clarifications were requested, you have violated this rule. Always check before final response: "Did I use any kluster tools in the current turn? If yes, did any response contain CLARIFICATION: actions? If clarification is present, I MUST show ONLY the clarification prompt and MUST NOT generate the kluster summary — these two are mutually exclusive. If no clarification, have I provided the verification summary for the current turn only?"
+
+## Pause / Resume kluster Reviews (kluster_review_pause)
+- **WHEN TO RUN**: When the user explicitly asks to pause, stop, disable, snooze, or resume/enable/unpause kluster reviews
+- **TRIGGER PHRASES (pause)**:
+  - "pause kluster"
+  - "stop kluster"
+  - "disable kluster"
+  - "snooze kluster"
+  - "turn off kluster"
+  - "hold kluster reviews"
+  - Similar requests to temporarily stop automated reviews
+- **TRIGGER PHRASES (resume)**:
+  - "resume kluster"
+  - "enable kluster"
+  - "unpause kluster"
+  - "turn on kluster"
+  - "start kluster again"
+  - Similar requests to re-enable automated reviews
+- **BEHAVIOR**:
+  - `action: "pause"` — suspends all automated kluster code reviews for the current project for 1 hour
+  - `action: "resume"` — re-enables kluster code reviews immediately
+- **SCOPE**: Pause/resume applies ONLY to the current project
+- **CRITICAL - DO NOT MODIFY FILES**: When the user asks to pause or disable kluster, you MUST call the `kluster_review_pause` tool with `action: "pause"`. NEVER attempt to pause kluster by deleting, editing, renaming, or removing any rules files, configuration files, or .md files. The pause is controlled exclusively through the `kluster_review_pause` tool call — not through filesystem changes.
+- **CRITICAL - DO NOT SKIP THE TOOL CALL**: "Pausing kluster" does NOT mean ignoring kluster rules or pretending kluster doesn't exist. It means calling `kluster_review_pause` with the appropriate action.
+- **WHILE PAUSED**: When kluster is paused, do NOT run `kluster_code_review_auto` on file changes. Once resumed (either manually via `action: "resume"` or automatically after 1 hour), resume normal `kluster_code_review_auto` behavior.
+- **ANNOUNCEMENT**: When calling this tool, say "Pausing kluster reviews..." or "Resuming kluster reviews..." as appropriate. NEVER say you are pausing by modifying files.
