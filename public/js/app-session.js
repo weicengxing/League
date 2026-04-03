@@ -95,6 +95,7 @@ async function handleMelonPostSubmit(event) {
     content: draftContent,
     category: "瓜棚",
     created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
+    created_at_ts: Date.now(),
     author: state.me.user?.username || state.me.user?.display_name || "匿名用户",
   };
   

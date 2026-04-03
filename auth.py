@@ -78,6 +78,16 @@ def now_text():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def db_datetime_to_timestamp_ms(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return int(datetime.strptime(text, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
+    except ValueError:
+        return None
+
+
 def hash_password(password: str, salt: str) -> str:
     """使用 PBKDF2 哈希密码"""
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
@@ -371,6 +381,7 @@ def get_current_auth(handler):
         user["member_id"] = session.get("member_id")
         user["member"] = session.get("member")
         user["member_unbind_available_at"] = session.get("member_unbind_available_at")
+        user["member_unbind_available_at_ts"] = db_datetime_to_timestamp_ms(session.get("member_unbind_available_at"))
         user["avatar_url"] = session.get("avatar_url", "")
         user["role"] = normalize_role(session.get("role"))
         user["alliance"] = session.get("alliance", "")
@@ -688,6 +699,7 @@ class AuthHandler:
                         "member_id": member_id,
                         "member": member_id or row["member"],
                         "member_unbind_available_at": row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None,
+                        "member_unbind_available_at_ts": db_datetime_to_timestamp_ms(row["member_unbind_available_at"] if "member_unbind_available_at" in row.keys() else None),
                         "role": normalized_role,
                         "alliance": row["alliance"],
                         "league": normalize_league_scope(row["league"]),
@@ -872,6 +884,7 @@ class AuthHandler:
             user_info["member_id"] = session.get("member_id")
             user_info["member"] = session.get("member")
             user_info["member_unbind_available_at"] = session.get("member_unbind_available_at")
+            user_info["member_unbind_available_at_ts"] = db_datetime_to_timestamp_ms(session.get("member_unbind_available_at"))
             user_info["avatar_url"] = session.get("avatar_url", "")
             user_info["role"] = normalize_role(session.get("role"))
             user_info["alliance"] = session.get("alliance", "")
@@ -891,6 +904,7 @@ class AuthHandler:
             "member_id": session.get("member_id"),
             "member": session.get("member"),
             "member_unbind_available_at": session.get("member_unbind_available_at"),
+            "member_unbind_available_at_ts": db_datetime_to_timestamp_ms(session.get("member_unbind_available_at")),
             "avatar_url": session.get("avatar_url", ""),
             "role": normalize_role(session.get("role")),
             "alliance": session.get("alliance", ""),
@@ -961,6 +975,7 @@ def require_user(handler) -> dict | None:
         "email": session["email"],
         "member_id": session.get("member_id"),
         "member_unbind_available_at": session.get("member_unbind_available_at"),
+        "member_unbind_available_at_ts": db_datetime_to_timestamp_ms(session.get("member_unbind_available_at")),
         "avatar_url": session.get("avatar_url", ""),
         "is_admin": False,
     }

@@ -169,6 +169,7 @@ class MemberGuildMixin:
                     "content": row["content"],
                     "category": row["category"],
                     "created_at": row["created_at"],
+                    "created_at_ts": int(datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S").timestamp() * 1000) if row["created_at"] else None,
                     "author": row["author"],
                 }
                 for row in rows
@@ -524,7 +525,7 @@ class MemberGuildMixin:
             connection.commit()
 
         self.send_json(
-            {"message": "内容发布成功", "item": {"id": cursor.lastrowid, "title": title, "content": content, "category": category, "created_at": timestamp}},
+            {"message": "内容发布成功", "item": {"id": cursor.lastrowid, "title": title, "content": content, "category": category, "created_at": timestamp, "created_at_ts": int(datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)}},
             status=HTTPStatus.CREATED,
         )
     def create_melon_post(self, user, payload):
@@ -559,6 +560,7 @@ class MemberGuildMixin:
             "content": content,
             "category": "\u74dc\u68da",
             "created_at": timestamp,
+            "created_at_ts": int(datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").timestamp() * 1000),
             "author": author_name,
             "author_id": user_id,
         }

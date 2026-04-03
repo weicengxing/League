@@ -3,10 +3,9 @@
   return items.map((item) => {
     // 璁＄畻鏄惁鍦?鍒嗛挓鍐呭彲鎾ゅ洖
     let canRevoke = false;
-    if (item.created_at && state.me.authenticated) {
-      const createdTime = new Date(item.created_at.replace(' ', 'T'));
-      const now = new Date();
-      const elapsed = (now - createdTime) / 1000; // 绉?
+    if (state.me.authenticated) {
+      const createdAtMs = Number(item.created_at_ts || 0);
+      const elapsed = createdAtMs > 0 ? (Date.now() - createdAtMs) / 1000 : Number.POSITIVE_INFINITY;
       canRevoke = elapsed <= 120; // 2鍒嗛挓 = 120绉?
       // 妫€鏌ユ槸鍚︽槸鍙戝竷鑰呮湰浜?
       const currentUsername = state.me.user?.username || state.me.user?.display_name || "";
@@ -34,9 +33,8 @@ function hasPendingMemberRequest(memberId) {
 
 function getMemberClaimCooldownText() {
   const availableAt = state.me?.user?.member_unbind_available_at;
-  if (!availableAt) return "";
-  const parsed = new Date(String(availableAt).replace(" ", "T"));
-  if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) return "";
+  const availableAtMs = Number(state.me?.user?.member_unbind_available_at_ts || 0);
+  if (!availableAt || availableAtMs <= Date.now()) return "";
   return `冷却中，${availableAt} 后可再次认领`;
 }
 

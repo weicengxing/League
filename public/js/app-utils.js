@@ -1,7 +1,7 @@
 ﻿function newerDate(currentValue, nextValue) {
   if (!currentValue) return nextValue;
   if (!nextValue) return currentValue;
-  return new Date(nextValue) > new Date(currentValue) ? nextValue : currentValue;
+  return String(nextValue) > String(currentValue) ? nextValue : currentValue;
 }
 
 function getGuildManualPower(members) {
