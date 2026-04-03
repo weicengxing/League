@@ -11,6 +11,7 @@ let noticeModalTimer = null;
 let noticeModalConfirmHandler = null;
 const customSelectRegistry = new Map();
 let customSelectEventsBound = false;
+const pendingMelonImageFiles = new Map();
 
 function connectMelonWebSocket() {
   if (melonWs && melonWs.readyState === WebSocket.OPEN) {
@@ -588,6 +589,8 @@ const els = {
   melonEditor: document.querySelector("#melonEditor"),
   melonToolbar: document.querySelector("#melonToolbar"),
   melonContent: document.querySelector("#melonContent"),
+  melonImageInput: document.querySelector("#melonImageInput"),
+  melonPasteImageBtn: document.querySelector("#melonPasteImageBtn"),
 };
 
 setupUserProfileUI();
@@ -1034,6 +1037,13 @@ function setupRichTextEditors() {
     html: "",
     config: {
       placeholder: "分享新鲜事...",
+      MENU_CONF: {
+        uploadImage: {
+          async customUpload(file) {
+            insertMelonImageFromFile(file);
+          },
+        },
+      },
       onChange(editor) {
         if (els.melonContent) {
           els.melonContent.value = normalizeRichEditorHtml(editor.getHtml());
@@ -1047,6 +1057,7 @@ function setupRichTextEditors() {
     selector: "#melonToolbar",
     mode: "simple",
   });
+  editorRoot.addEventListener("paste", handleMelonClipboardPaste);
 }
 
 function bindEvents() {
@@ -1159,6 +1170,8 @@ function bindEvents() {
   els.profilePage?.addEventListener("submit", handleProfileSubmit);
   els.memberScreenshotInput?.addEventListener("change", handleMemberScreenshotSelected);
   els.profileAvatarInput?.addEventListener("change", handleProfileAvatarSelected);
+  els.melonImageInput?.addEventListener("change", handleMelonImageSelected);
+  els.melonPasteImageBtn?.addEventListener("click", handleMelonPasteImageClick);
   els.melonList?.addEventListener("click", handleFeedListClick);
   els.announcementList?.addEventListener("click", handleFeedListClick);
   els.dangerConfirmSubmitBtn?.addEventListener("click", () => resolveDangerConfirm(true));
@@ -1178,6 +1191,13 @@ function bindEvents() {
   if (melonPostForm) {
     melonPostForm.addEventListener("submit", handleMelonPostSubmit);
   }
+  window.addEventListener("beforeunload", () => {
+    const currentHtml = melonRichEditor?.getHtml?.() || els.melonContent?.value || "";
+    const objectUrls = getPendingMelonImageObjectUrls(currentHtml);
+    if (objectUrls.length) {
+      cleanupPendingMelonImages(objectUrls);
+    }
+  });
   
   // 鐡滄鎾ゅ洖鎸夐挳
   document.addEventListener("click", (event) => {

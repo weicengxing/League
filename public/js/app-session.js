@@ -66,7 +66,15 @@ async function handleMelonPostSubmit(event) {
   const form = document.querySelector("#melonPostForm");
   
   const title = titleInput?.value.trim();
-  const content = normalizeRichEditorHtml(contentInput?.value.trim());
+  const draftContent = normalizeRichEditorHtml(contentInput?.value.trim());
+  let submission;
+  try {
+    submission = prepareMelonContentForSubmit(draftContent);
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  const content = submission.content;
   const plainContent = htmlToPlainText(content);
   
   if (!title || !plainContent) {
@@ -84,7 +92,7 @@ async function handleMelonPostSubmit(event) {
   const tempItem = {
     id: tempId,
     title: title,
-    content: content,
+    content: draftContent,
     category: "瓜棚",
     created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
     author: state.me.user?.username || state.me.user?.display_name || "匿名用户",
@@ -94,15 +102,26 @@ async function handleMelonPostSubmit(event) {
   state.announcements.unshift(tempItem);
   state.melonPage = 1;
   renderFeeds();
-  
-  // Clear form
-  form?.reset();
-  resetMelonEditor();
-  
+
   try {
+    const formData = new FormData();
+    const imagesMeta = [];
+    formData.append("title", title);
+    formData.append("content", content);
+    submission.pendingImages.forEach((image, index) => {
+      const fieldName = `melon_image_${index}`;
+      formData.append(fieldName, image.file, image.file?.name || `${image.tempId}.png`);
+      imagesMeta.push({
+        tempId: image.tempId,
+        fieldName,
+        alt: image.alt || "瓜棚图片",
+      });
+    });
+    formData.append("images_meta", JSON.stringify(imagesMeta));
+
     const result = await request("/api/melon", {
       method: "POST",
-      body: JSON.stringify({ title, content }),
+      body: formData,
     });
     
     // Replace the optimistic item and dedupe against any WebSocket echo
@@ -122,6 +141,8 @@ async function handleMelonPostSubmit(event) {
     state.melonPage = 1;
     renderFeeds();
     renderAdminAnnouncements();
+    form?.reset();
+    resetMelonEditor();
     
     toast("瓜棚发布成功");
   } catch (error) {

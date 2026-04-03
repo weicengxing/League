@@ -137,6 +137,17 @@ function renderStoredContent(content) {
   return text;
 }
 
+function buildFeedSummary(content, maxLength = 88) {
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderStoredContent(content || "");
+  const imageCount = wrapper.querySelectorAll("img").length;
+  const plainText = (wrapper.textContent || wrapper.innerText || "").replace(/\s+/g, " ").trim();
+  const imageLabel = imageCount > 0 ? `[图片${imageCount > 1 ? ` ${imageCount}` : ""}]` : "";
+  const combined = [imageLabel, plainText].filter(Boolean).join(" ");
+  if (!combined) return "点击查看详情";
+  return combined.length > maxLength ? `${combined.slice(0, maxLength).trim()}...` : combined;
+}
+
 function contentToEditorText(content) {
   const text = String(content || "");
   if (!/<[a-z][\s\S]*>/i.test(text)) {
@@ -244,12 +255,169 @@ function syncMelonEditorValue() {
   }
 }
 
-function resetMelonEditor() {
+function getPendingMelonImageObjectUrls(content = "") {
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = String(content || "");
+  return [...new Set(
+    [...wrapper.querySelectorAll("img")]
+      .map((image) => String(image.getAttribute("src") || "").trim())
+      .filter((src) => src.startsWith("blob:"))
+  )];
+}
+
+function cleanupPendingMelonImages(targets) {
+  const values = [...new Set((targets || []).filter(Boolean))];
+  for (const value of values) {
+    let entryKey = "";
+    let entry = pendingMelonImageFiles.get(value);
+    if (entry) {
+      entryKey = value;
+    } else {
+      for (const [tempId, pendingEntry] of pendingMelonImageFiles.entries()) {
+        if (pendingEntry?.objectUrl === value) {
+          entryKey = tempId;
+          entry = pendingEntry;
+          break;
+        }
+      }
+    }
+    if (!entry) continue;
+    if (entry.objectUrl) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+    pendingMelonImageFiles.delete(entryKey);
+  }
+}
+
+function resetMelonEditor({ cleanup = true } = {}) {
+  const currentHtml = melonRichEditor?.getHtml?.() || els.melonContent?.value || "";
+  const objectUrls = cleanup ? getPendingMelonImageObjectUrls(currentHtml) : [];
   if (melonRichEditor) {
     melonRichEditor.setHtml("");
   }
   if (els.melonContent) {
     els.melonContent.value = "";
+  }
+  if (cleanup && objectUrls.length) {
+    cleanupPendingMelonImages(objectUrls);
+  }
+}
+
+function insertMelonImage(url, altText = "瓜棚图片") {
+  if (!melonRichEditor || !url) return;
+  const safeUrl = escapeHtml(String(url));
+  const safeAlt = escapeHtml(String(altText || "瓜棚图片"));
+  const html = `<p><img src="${safeUrl}" alt="${safeAlt}"></p>`;
+  if (typeof melonRichEditor.dangerouslyInsertHtml === "function") {
+    melonRichEditor.dangerouslyInsertHtml(html);
+  } else if (typeof melonRichEditor.getHtml === "function" && typeof melonRichEditor.setHtml === "function") {
+    melonRichEditor.setHtml(`${melonRichEditor.getHtml() || ""}${html}`);
+  }
+  syncMelonEditorValue();
+}
+
+function validateMelonImageFile(file) {
+  if (!file) throw new Error("请选择图片");
+  if (!String(file.type || "").startsWith("image/")) {
+    throw new Error("仅支持图片文件");
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("图片不能超过 10MB");
+  }
+}
+
+function buildPendingMelonImageSrc(tempId) {
+  return `/uploads/melon/__pending__/${encodeURIComponent(String(tempId || ""))}`;
+}
+
+function insertMelonImageFromFile(file) {
+  validateMelonImageFile(file);
+  const tempId = `melon_temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const objectUrl = URL.createObjectURL(file);
+  pendingMelonImageFiles.set(tempId, {
+    file,
+    objectUrl,
+    alt: file?.name || "瓜棚图片",
+  });
+  insertMelonImage(objectUrl, file?.name || "瓜棚图片");
+  toast("图片已插入");
+}
+
+function prepareMelonContentForSubmit(content) {
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = String(content || "");
+  const images = [...wrapper.querySelectorAll("img")];
+  const pendingImages = [];
+  for (const image of images) {
+    const src = String(image.getAttribute("src") || "").trim();
+    if (!src.startsWith("blob:")) continue;
+    const pendingEntry = [...pendingMelonImageFiles.entries()].find(([, value]) => value?.objectUrl === src);
+    const [tempId, pending] = pendingEntry || [];
+    if (!tempId || !pending?.file) {
+      throw new Error("存在未准备好的图片，请重新插入后再试");
+    }
+    validateMelonImageFile(pending.file);
+    image.setAttribute("src", buildPendingMelonImageSrc(tempId));
+    image.setAttribute("alt", image.getAttribute("alt") || pending.alt || "瓜棚图片");
+    pendingImages.push({
+      tempId,
+      file: pending.file,
+      alt: image.getAttribute("alt") || pending.alt || "瓜棚图片",
+    });
+  }
+  return {
+    content: wrapper.innerHTML,
+    pendingImages,
+  };
+}
+
+async function handleMelonClipboardPaste(event) {
+  const items = Array.from(event?.clipboardData?.items || []);
+  const imageItem = items.find((item) => String(item.type || "").startsWith("image/"));
+  if (!imageItem) return;
+  event.preventDefault();
+  const file = imageItem.getAsFile();
+  if (!file) return;
+  try {
+    insertMelonImageFromFile(file);
+  } catch (error) {
+    toast(error.message || "图片粘贴失败");
+  }
+}
+
+async function handleMelonPasteImageClick() {
+  if (!navigator.clipboard?.read) {
+    els.melonImageInput?.click();
+    return;
+  }
+  try {
+    const clipboardItems = await navigator.clipboard.read();
+    for (const item of clipboardItems) {
+      const imageType = item.types.find((type) => type.startsWith("image/"));
+      if (!imageType) continue;
+      const blob = await item.getType(imageType);
+      const extension = imageType.split("/")[1] || "png";
+      const file = new File([blob], `melon-paste.${extension}`, { type: imageType });
+      insertMelonImageFromFile(file);
+      return;
+    }
+    toast("剪贴板中没有图片");
+  } catch (error) {
+    toast(error.message || "读取剪贴板失败，请确认已复制图片并允许访问剪贴板");
+  }
+}
+
+async function handleMelonImageSelected(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+  try {
+    insertMelonImageFromFile(file);
+  } catch (error) {
+    toast(error.message || "图片上传失败");
+  } finally {
+    if (event?.target) {
+      event.target.value = "";
+    }
   }
 }
 

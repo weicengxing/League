@@ -1,3 +1,5 @@
+import re
+
 from alliance_server.shared import *
 
 from auth import ROLE_ALLIANCEADMIN, get_current_auth, update_user_sessions_for_user
@@ -528,17 +530,38 @@ class MemberGuildMixin:
     def create_melon_post(self, user, payload):
         """Create a melon post - called from /api/melon endpoint."""
         title = str(payload.get("title", "")).strip()
-        content = sanitize_rich_html(payload.get("content", ""))
+        author_name = user.get("username") or user.get("display_name") or "匿名用户"
+        user_id = user.get("id") or user.get("admin_id")
+        try:
+            content = self.finalize_melon_content_images(
+                payload.get("content", ""),
+                payload.get("image_files", []),
+                user_id,
+            )
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        content = sanitize_rich_html(content)
         if not title or not content:
             self.send_json({"error": "标题和内容不能为空"}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        # Get author name from user object
-        author_name = user.get("username") or user.get("display_name") or "匿名用户"
-        user_id = user.get("id") or user.get("admin_id")
-
-        # Create melon post
-        melon_item = create_melon_post(title, content, author_name, user_id)
+        timestamp = now_text()
+        with open_db() as connection:
+            cursor = connection.execute(
+                "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
+                (title, content, "\u74dc\u68da", timestamp, author_name),
+            )
+            connection.commit()
+        melon_item = {
+            "id": cursor.lastrowid,
+            "title": title,
+            "content": content,
+            "category": "\u74dc\u68da",
+            "created_at": timestamp,
+            "author": author_name,
+            "author_id": user_id,
+        }
 
         self.send_json(
             {"message": "瓜棚发布成功", "item": melon_item},
@@ -549,6 +572,132 @@ class MemberGuildMixin:
             broadcast_melon_post(melon_item)
         except Exception:
             pass
+
+    def read_melon_post_payload(self):
+        content_type = str(self.headers.get("Content-Type", "") or "")
+        if "multipart/form-data" not in content_type:
+            payload = self.read_json()
+            return payload if isinstance(payload, dict) else {}
+
+        form = parse_form_data(self)
+        title = form.get("title", "") if hasattr(form, "get") else ""
+        content = form.get("content", "") if hasattr(form, "get") else ""
+        raw_images_meta = form.get("images_meta", "[]") if hasattr(form, "get") else "[]"
+        try:
+            images_meta = json.loads(str(raw_images_meta or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self.send_json({"error": "图片参数格式不正确"}, status=HTTPStatus.BAD_REQUEST)
+            return None
+        if not isinstance(images_meta, list):
+            self.send_json({"error": "图片参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return None
+
+        image_files = []
+        seen_temp_ids = set()
+        for item in images_meta:
+            if not isinstance(item, dict):
+                self.send_json({"error": "图片参数无效"}, status=HTTPStatus.BAD_REQUEST)
+                return None
+            temp_id = str(item.get("tempId", "")).strip()
+            field_name = str(item.get("fieldName", "")).strip()
+            alt = str(item.get("alt", "")).strip()
+            if not temp_id or not field_name or temp_id in seen_temp_ids:
+                self.send_json({"error": "图片参数无效"}, status=HTTPStatus.BAD_REQUEST)
+                return None
+            file_item = form.get(field_name) if hasattr(form, "get") else None
+            if file_item is None or getattr(file_item, "file", None) is None:
+                self.send_json({"error": "图片数据不完整"}, status=HTTPStatus.BAD_REQUEST)
+                return None
+            image_files.append({
+                "temp_id": temp_id,
+                "alt": alt,
+                "file_item": file_item,
+            })
+            seen_temp_ids.add(temp_id)
+
+        return {
+            "title": title,
+            "content": content,
+            "image_files": image_files,
+        }
+
+    def get_pending_melon_image_placeholders(self, content):
+        text = str(content or "")
+        matches = re.findall(r'(/uploads/melon/__pending__/[^"\')\s>]+)', text, flags=re.IGNORECASE)
+        placeholders = []
+        seen = set()
+        for item in matches:
+            relative = str(item).strip()
+            if not relative or relative in seen:
+                continue
+            seen.add(relative)
+            temp_id = unquote(relative.rsplit("/", 1)[-1]).strip()
+            if not temp_id:
+                continue
+            placeholders.append((relative, temp_id))
+        return placeholders
+
+    def save_melon_content_image(self, *, file_item, user_id, timestamp, index):
+        raw = file_item.file.read()
+        if not raw:
+            raise ValueError("图片文件不能为空")
+        if len(raw) > 10 * 1024 * 1024:
+            raise ValueError("图片不能超过 10MB")
+
+        filename = Path(getattr(file_item, "filename", "") or "")
+        suffix = filename.suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            raise ValueError("仅支持 png、jpg、jpeg、gif、webp 图片")
+
+        safe_user_id = user_id or "guest"
+        relative_path = f"/uploads/melon/melon-{safe_user_id}-{timestamp}-{index}{suffix}"
+        target_path = PUBLIC_DIR / relative_path.lstrip("/")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(raw)
+        return relative_path
+
+    def finalize_melon_content_images(self, content, image_files, user_id):
+        text = str(content or "")
+        placeholders = self.get_pending_melon_image_placeholders(text)
+        if not placeholders:
+            return text
+
+        finalized = text
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        image_lookup = {
+            str(item.get("temp_id", "")).strip(): item
+            for item in (image_files or [])
+            if isinstance(item, dict)
+        }
+        for index, (placeholder, temp_id) in enumerate(placeholders, start=1):
+            image_item = image_lookup.get(temp_id)
+            if not image_item:
+                raise ValueError("发布内容中的图片数据不完整，请重新插入后再试")
+            final_relative = self.save_melon_content_image(
+                file_item=image_item["file_item"],
+                user_id=user_id,
+                timestamp=timestamp,
+                index=index,
+            )
+            finalized = finalized.replace(placeholder, final_relative)
+        return finalized
+
+    def delete_melon_content_images(self, content):
+        matches = re.findall(r'(/uploads/melon/[^"\')\s>]+)', str(content or ""), flags=re.IGNORECASE)
+        seen = set()
+        for relative in matches:
+            value = str(relative).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            target = PUBLIC_DIR / value.lstrip("/")
+            try:
+                resolved = target.resolve()
+                melon_root = MELON_UPLOADS_DIR.resolve()
+                if str(resolved).startswith(str(melon_root)) and resolved.exists() and resolved.is_file():
+                    resolved.unlink()
+            except FileNotFoundError:
+                continue
 
     def delete_melon_post(self, user, melon_id):
         """Delete a melon post - called from /api/melon/<id> endpoint."""
@@ -562,12 +711,16 @@ class MemberGuildMixin:
         with open_db() as connection:
             # Get the melon post
             row = connection.execute(
-                "SELECT id, title, author, created_at FROM announcements WHERE id = ? AND category = '瓜棚'",
+                "SELECT id, title, content, category, author, created_at FROM announcements WHERE id = ?",
                 (melon_id,),
             ).fetchone()
 
             if not row:
                 self.send_json({"error": "瓜棚动态不存在"}, status=HTTPStatus.NOT_FOUND)
+                return
+
+            if str(row["category"] or "").strip() == "\u516c\u544a":
+                self.send_json({"error": "\u74dc\u68da\u52a8\u6001\u4e0d\u5b58\u5728"}, status=HTTPStatus.NOT_FOUND)
                 return
 
             # Check if the user is the author (compare by username/display_name)
@@ -600,6 +753,7 @@ class MemberGuildMixin:
             return
 
         try:
+            self.delete_melon_content_images(row["content"] or "")
             broadcast_melon_deleted(int(melon_id))
         except Exception:
             pass

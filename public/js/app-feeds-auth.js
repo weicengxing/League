@@ -16,11 +16,12 @@
     }
     const renderedContent = renderStoredContent(item.content || "");
     const plainText = escapeHtml(htmlToPlainText(renderedContent));
+    const summaryText = escapeHtml(buildFeedSummary(item.content || ""));
     return `
       <article class="feed-item" data-melon-id="${item.id}" data-feed-preview="${item.id}">
         <small class="feed-item__meta">${escapeHtml(item.created_at || "")}${item.author ? ` · ${escapeHtml(item.author)}` : ""}</small>
         <strong>${escapeHtml(item.title)}</strong>
-        <div class="feed-item__content" title="${plainText}">${renderedContent}</div>
+        <div class="feed-item__content" title="${plainText}">${summaryText}</div>
         <span class="feed-item__preview-hint">查看详情</span>
         ${canRevoke ? `<button type="button" class="melon-revoke-btn" data-melon-revoke="${item.id}">撤回</button>` : ""}      </article>
     `;

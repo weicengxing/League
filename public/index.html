@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link href="https://unpkg.com/@wangeditor/editor@latest/dist/css/style.css" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20260403a">
+  <link rel="stylesheet" href="/styles.css?v=20260403c">
 </head>
 <body>
   <div class="board-page">
@@ -28,6 +28,7 @@
         <button id="identitySwapRequestBtn" type="button" class="ghost-btn hidden">交换申请</button>
         <button id="dbAdminBtn" type="button" class="ghost-btn hidden">数据库管理</button>
         <button id="dbExportBtn" type="button" class="ghost-btn hidden">导出数据库</button>
+        <button id="uploadsExportBtn" type="button" class="ghost-btn hidden">导出图片包</button>
       </div>
     </header>
 
@@ -149,7 +150,10 @@
                 <div id="melonEditor" class="rich-editor__surface"></div>
               </div>
               <textarea id="melonContent" rows="2" placeholder="分享新鲜事..." required class="hidden"></textarea>
-              <button type="submit" class="primary-btn">发布</button>
+              <div class="melon-post-form__actions">
+                <button id="melonPasteImageBtn" type="button" class="ghost-btn">粘贴图片</button>
+                <button type="submit" class="primary-btn">发布</button>
+              </div>
             </form>
             <div id="melonList" class="feed-list"></div>
           </article>
@@ -738,6 +742,7 @@
 
   <input id="memberScreenshotInput" type="file" accept="image/*" class="hidden">
   <input id="profileAvatarInput" type="file" accept="image/*" class="hidden">
+  <input id="melonImageInput" type="file" accept="image/*" class="hidden">
 
   <div id="dangerConfirmModal" class="modal hidden">
     <div class="modal__backdrop" data-close-modal="danger-confirm"></div>
@@ -795,14 +800,14 @@
 
   <script src="https://unpkg.com/@wangeditor/editor@latest/dist/index.js"></script>
   <script src="/js/user-role-badges.js?v=20260331a"></script>
-  <script src="/js/app-core.js?v=20260330c"></script>
-  <script src="/js/app-session.js?v=20260330b"></script>
+  <script src="/js/app-core.js?v=20260403a"></script>
+  <script src="/js/app-session.js?v=20260403b"></script>
   <script src="/js/app-browse.js?v=20260329b"></script>
-  <script src="/js/app-feeds-auth.js?v=20260330c"></script>
+  <script src="/js/app-feeds-auth.js?v=20260403d"></script>
   <script src="/js/app-admin.js?v=20260329b"></script>
   <script src="/js/app-admin-actions.js?v=20260330b"></script>
-  <script src="/js/app-utils.js?v=20260329b"></script>
-  <script src="/js/app-db-admin.js?v=20260330a"></script>
+  <script src="/js/app-utils.js?v=20260403b"></script>
+  <script src="/js/app-db-admin.js?v=20260403b"></script>
   <script src="/app.js?v=20260329b"></script>
 </body>
 </html>

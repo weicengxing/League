@@ -160,6 +160,7 @@ PUBLIC_DIR = BASE_DIR / "public"
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = PUBLIC_DIR / "uploads" / "member-screenshots"
 AVATAR_UPLOADS_DIR = PUBLIC_DIR / "uploads" / "avatars"
+MELON_UPLOADS_DIR = PUBLIC_DIR / "uploads" / "melon"
 DB_PATH = DATA_DIR / "alliance.db"
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8878"))
@@ -522,7 +523,7 @@ def list_group_chat_message_tables(connection, group_chat_id):
 
 
 class RichTextSanitizer(HTMLParser):
-    allowed_tags = {"b", "strong", "i", "em", "u", "br", "p", "ul", "ol", "li", "a"}
+    allowed_tags = {"b", "strong", "i", "em", "u", "br", "p", "ul", "ol", "li", "a", "img"}
 
     def __init__(self):
         super().__init__()
@@ -541,7 +542,22 @@ class RichTextSanitizer(HTMLParser):
             if href:
                 self.parts.append(f'<a href="{href}" target="_blank" rel="noopener noreferrer">')
                 return
+        if tag == "img":
+            src = ""
+            alt = ""
+            for key, value in attrs:
+                key_lower = str(key).lower()
+                if key_lower == "src" and isinstance(value, str) and value.startswith(("/", "http://", "https://")):
+                    src = html.escape(value, quote=True)
+                if key_lower == "alt" and isinstance(value, str):
+                    alt = html.escape(value, quote=True)
+            if src:
+                self.parts.append(f'<img src="{src}" alt="{alt}">')
+            return
         self.parts.append(f"<{tag}>")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
         tag = tag.lower()
@@ -714,6 +730,7 @@ def initialize_database():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     AVATAR_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    MELON_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     with open_db() as connection:
         ensure_user_message_registry(connection)
         ensure_group_chat_message_registry(connection)

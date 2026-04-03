@@ -1163,6 +1163,18 @@ button {
   min-width: 120px;
 }
 
+.melon-post-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.melon-post-form__actions .ghost-btn,
+.melon-post-form__actions .primary-btn {
+  min-width: 120px;
+}
+
 .rich-editor {
   display: grid;
   gap: 0;
@@ -2274,6 +2286,15 @@ td {
   color: #445241;
 }
 
+.feed-preview__content img,
+.feed-item__content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 14px;
+  margin: 10px 0;
+}
+
 .feed-preview__content p:first-child {
   margin-top: 0;
 }
@@ -3169,6 +3190,11 @@ td {
   .announcement-form {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  .melon-post-form__actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .group-chat-create-form,

@@ -354,7 +354,9 @@ class ApiRoutesMixin:
             if not self.has_permission(user, "create_posts"):
                 self.send_json({"error": "当前账号没有发布瓜棚动态的权限"}, status=HTTPStatus.FORBIDDEN)
                 return
-            payload = self.read_json()
+            payload = self.read_melon_post_payload()
+            if payload is None:
+                return
             self.create_melon_post(user, payload)
             return
         self.send_json({"error": "接口不存在"}, status=HTTPStatus.NOT_FOUND)
