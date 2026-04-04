@@ -3,32 +3,15 @@ from alliance_server.shared import broadcast_auth_event, list_group_chat_message
 
 class GroupChatDeletionMixin:
     def delete_group_chat(self, current, group_chat_id):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
+        user, user_id = self._require_group_chat_user(current)
+        if not user:
+            return
         with open_db() as connection:
             group_row, _ = self._require_group_owner(connection, group_chat_id, user_id)
             if not group_row:
                 return
 
-            member_ids = {
-                int(row["user_id"])
-                for row in connection.execute(
-                    "SELECT user_id FROM group_chat_members WHERE group_chat_id = ?",
-                    (int(group_chat_id),),
-                ).fetchall()
-            }
-            invite_user_ids = {
-                int(row["user_id"])
-                for row in connection.execute(
-                    """
-                    SELECT inviter_user_id AS user_id FROM group_chat_invitations WHERE group_chat_id = ?
-                    UNION
-                    SELECT invitee_user_id AS user_id FROM group_chat_invitations WHERE group_chat_id = ?
-                    """,
-                    (int(group_chat_id), int(group_chat_id)),
-                ).fetchall()
-                if row["user_id"] is not None
-            }
+            target_user_ids = self._collect_group_chat_related_user_ids(connection, group_chat_id)
 
             for table_name in list_group_chat_message_tables(connection, group_chat_id):
                 connection.execute(f'DROP TABLE IF EXISTS "{table_name}"')
@@ -50,7 +33,6 @@ class GroupChatDeletionMixin:
             )
             connection.commit()
 
-        target_user_ids = member_ids.union(invite_user_ids)
         broadcast_auth_event(
             {
                 "type": "group_chat_deleted",

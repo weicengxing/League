@@ -87,7 +87,6 @@ class UserMessagesMixin:
                 )
 
             if mark_read:
-                timestamp = now_text()
                 for table_name in table_names:
                     connection.execute(
                         f"""
@@ -163,7 +162,7 @@ class UserMessagesMixin:
         with open_db() as connection:
             target_row = connection.execute(
                 """
-                SELECT id, username, role, COALESCE(member_id, member) AS linked_member_id
+                SELECT id
                 FROM users
                 WHERE id = ? AND is_active = 1
                 LIMIT 1

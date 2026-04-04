@@ -4315,20 +4315,20 @@ td {
   resize: vertical;
 }
 
-.db-cell-truncate {
+.db-cell-truncate,
+.db-cell-content {
   display: block;
-  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.db-cell-truncate {
+  max-width: 200px;
+}
+
 .db-cell-content {
   max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: block;
 }
 
 .pagination {
@@ -4404,8 +4404,6 @@ td {
 /* 数据库编辑模态框 - 确保字段列表水平滚动 */
 #dbEditModal .db-edit-fields {
   overflow-x: auto;
-  display: grid;
-  gap: 14px;
   max-height: 60vh;
   overflow-y: auto;
   padding-right: 8px;

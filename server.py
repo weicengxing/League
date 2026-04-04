@@ -29,7 +29,6 @@ from alliance_server.shared import (
     auth_ws_clients_lock,
     cleanup_expired_group_chat_history,
     cleanup_expired_user_message_history,
-    db_executor,
     initialize_database,
     now_text,
     open_db,
@@ -226,46 +225,6 @@ AllianceHandler.unregister_auth_ws_client = staticmethod(unregister_auth_ws_clie
 register_session_invalidation_notifier(notify_invalidated_session)
 
 
-def async_save_melon_to_db(title, content, author_name):
-    def _save():
-        timestamp = now_text()
-        with open_db() as connection:
-            cursor = connection.execute(
-                "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
-                (title, content, "瓜棚", timestamp, author_name),
-            )
-            connection.commit()
-            return {
-                "id": cursor.lastrowid,
-                "title": title,
-                "content": content,
-                "category": "???",
-                "created_at": timestamp,
-                "author": author_name,
-            }
-
-    future = db_executor.submit(_save)
-    return future
-
-
-def create_melon_post(title, content, author_name, user_id=None):
-    timestamp = now_text()
-    with open_db() as connection:
-        cursor = connection.execute(
-            "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
-            (title, content, "瓜棚", timestamp, author_name),
-        )
-        connection.commit()
-        melon_item = {
-            "id": cursor.lastrowid,
-            "title": title,
-            "content": content,
-            "category": "???",
-            "created_at": timestamp,
-            "author": author_name,
-            "author_id": user_id,
-        }
-    return melon_item
 
 
 def run_background_retention_cleanup():
@@ -313,9 +272,9 @@ def main():
     cleanup_thread = threading.Thread(target=run_background_retention_cleanup, daemon=True)
     cleanup_thread.start()
     server = ThreadingHTTPServer((HOST, PORT), AllianceHandler)
-    print(f"??????????????????: http://{HOST}:{PORT}")
-    print("??????????? admin (SuperAdmin)")
-    print("??????????? 123456")
+    print(f"\u670d\u52a1\u5668\u542f\u52a8\u5730\u5740: http://{HOST}:{PORT}")
+    print("\u8d85\u7ea7\u7ba1\u7406\u5458\u8d26\u53f7: admin (SuperAdmin)")
+    print("\u8d85\u7ea7\u7ba1\u7406\u5458\u5bc6\u7801: 123456")
     server.serve_forever()
 
 
@@ -323,4 +282,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n?????????")
+        print("\n\u670d\u52a1\u5668\u5df2\u505c\u6b62")

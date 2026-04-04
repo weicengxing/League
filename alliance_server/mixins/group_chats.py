@@ -15,6 +15,17 @@ GROUP_CHAT_MUTE_FOREVER = "9999-12-31 23:59:59"
 
 
 class GroupChatsMixin:
+    def _require_group_chat_user(self, current):
+        user = current.get("user") or {}
+        user_id = int(user.get("id") or 0)
+        if not user_id:
+            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            return None, 0
+        return user, user_id
+
+    def _group_chat_user_label(self, user_id, display_name="", username=""):
+        return str(display_name or "").strip() or str(username or "").strip() or f"用户#{int(user_id)}"
+
     def _group_chat_role_kind(self, user):
         role = normalize_role(user.get("role"))
         if role == ROLE_SUPERADMIN:
@@ -48,6 +59,60 @@ class GroupChatsMixin:
             """,
             (int(group_chat_id),),
         ).fetchone()
+
+    def _require_group_membership(self, connection, group_chat_id, user_id):
+        group_row = self._get_group_chat_row(connection, group_chat_id)
+        if not group_row:
+            self.send_json({"error": "群聊不存在"}, status=HTTPStatus.NOT_FOUND)
+            return None, None
+        membership = self._get_group_membership(connection, group_chat_id, user_id)
+        if not membership:
+            self.send_json({"error": "你不在该群聊中"}, status=HTTPStatus.FORBIDDEN)
+            return None, None
+        return group_row, membership
+
+    def _count_owned_group_chats(self, connection, user_id):
+        return int(
+            connection.execute(
+                "SELECT COUNT(*) AS count FROM group_chats WHERE owner_user_id = ? AND status = 'active'",
+                (int(user_id),),
+            ).fetchone()["count"]
+        )
+
+    def _mark_group_chat_read(self, connection, group_chat_id, user_id, last_message_at):
+        timestamp = now_text()
+        connection.execute(
+            """
+            UPDATE group_chat_members
+            SET last_read_message_at = ?, updated_at = ?
+            WHERE group_chat_id = ? AND user_id = ?
+            """,
+            (last_message_at, timestamp, int(group_chat_id), int(user_id)),
+        )
+
+    def _collect_group_chat_related_user_ids(self, connection, group_chat_id):
+        group_chat_id = int(group_chat_id)
+        member_ids = {
+            int(row["user_id"])
+            for row in connection.execute(
+                "SELECT user_id FROM group_chat_members WHERE group_chat_id = ?",
+                (group_chat_id,),
+            ).fetchall()
+            if row["user_id"] is not None
+        }
+        invite_user_ids = {
+            int(row["user_id"])
+            for row in connection.execute(
+                """
+                SELECT inviter_user_id AS user_id FROM group_chat_invitations WHERE group_chat_id = ?
+                UNION
+                SELECT invitee_user_id AS user_id FROM group_chat_invitations WHERE group_chat_id = ?
+                """,
+                (group_chat_id, group_chat_id),
+            ).fetchall()
+            if row["user_id"] is not None
+        }
+        return member_ids.union(invite_user_ids)
 
     def _get_group_membership(self, connection, group_chat_id, user_id):
         return connection.execute(
@@ -92,7 +157,7 @@ class GroupChatsMixin:
                 "joined_at": row["joined_at"] or "",
                 "username": row["username"] or "",
                 "user_role": row["user_role"] or ROLE_GUEST,
-                "display_name": row["display_name"] or row["username"] or f"用户#{row['user_id']}",
+                "display_name": self._group_chat_user_label(row["user_id"], row["display_name"], row["username"]),
                 "alliance": row["alliance"] or "",
                 "guild": row["guild"] or "",
             }
@@ -155,12 +220,7 @@ class GroupChatsMixin:
                 (user_id,),
             ).fetchall()
             items = [self._serialize_group_row(connection, row, user_id) for row in rows]
-            created_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS count FROM group_chats WHERE owner_user_id = ? AND status = 'active'",
-                    (user_id,),
-                ).fetchone()["count"]
-            )
+            created_count = self._count_owned_group_chats(connection, user_id)
         return {
             "items": items,
             "unread_count": sum(int(item["unread_count"] or 0) for item in items),
@@ -170,31 +230,17 @@ class GroupChatsMixin:
         }
 
     def list_group_chat_messages(self, current, group_chat_id, mark_read=False, limit=100):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
-        if not user_id:
-            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+        user, user_id = self._require_group_chat_user(current)
+        if not user:
             return
         with open_db() as connection:
-            group_row = self._get_group_chat_row(connection, group_chat_id)
+            group_row, _ = self._require_group_membership(connection, group_chat_id, user_id)
             if not group_row:
-                self.send_json({"error": "群聊不存在"}, status=HTTPStatus.NOT_FOUND)
-                return
-            membership = self._get_group_membership(connection, group_chat_id, user_id)
-            if not membership:
-                self.send_json({"error": "你不在该群聊中"}, status=HTTPStatus.FORBIDDEN)
                 return
             table_names = list_group_chat_message_tables(connection, group_chat_id)
             if not table_names:
                 if mark_read:
-                    connection.execute(
-                        """
-                        UPDATE group_chat_members
-                        SET last_read_message_at = ?, updated_at = ?
-                        WHERE group_chat_id = ? AND user_id = ?
-                        """,
-                        (group_row["last_message_at"], now_text(), int(group_chat_id), user_id),
-                    )
+                    self._mark_group_chat_read(connection, group_chat_id, user_id, group_row["last_message_at"])
                     connection.commit()
                 self.send_json({"items": [], "group": self._serialize_group_row(connection, group_row, user_id)})
                 return
@@ -224,14 +270,7 @@ class GroupChatsMixin:
                 (max(1, min(200, int(limit))),),
             ).fetchall()
             if mark_read:
-                connection.execute(
-                    """
-                    UPDATE group_chat_members
-                    SET last_read_message_at = ?, updated_at = ?
-                    WHERE group_chat_id = ? AND user_id = ?
-                    """,
-                    (group_row["last_message_at"], now_text(), int(group_chat_id), user_id),
-                )
+                self._mark_group_chat_read(connection, group_chat_id, user_id, group_row["last_message_at"])
                 connection.commit()
                 group_row = self._get_group_chat_row(connection, group_chat_id)
             items = [
@@ -243,7 +282,7 @@ class GroupChatsMixin:
                     "created_at": row["created_at"] or "",
                     "username": row["username"] or "",
                     "sender_role": row["user_role"] or ROLE_GUEST,
-                    "display_name": row["display_name"] or row["username"] or f"用户#{row['sender_user_id']}",
+                    "display_name": self._group_chat_user_label(row["sender_user_id"], row["display_name"], row["username"]),
                     "alliance": row["alliance"] or "",
                     "guild": row["guild"] or "",
                     "is_self": int(row["sender_user_id"]) == user_id,
@@ -253,10 +292,8 @@ class GroupChatsMixin:
             self.send_json({"items": items, "group": self._serialize_group_row(connection, group_row, user_id)})
 
     def create_group_chat(self, current, payload):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
-        if not user_id:
-            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+        user, user_id = self._require_group_chat_user(current)
+        if not user:
             return
         name = str(payload.get("name", "")).strip()
         if not name:
@@ -270,12 +307,7 @@ class GroupChatsMixin:
             return
         create_limit = self._group_chat_limit_for_user(user)
         with open_db() as connection:
-            created_count = int(
-                connection.execute(
-                    "SELECT COUNT(*) AS count FROM group_chats WHERE owner_user_id = ? AND status = 'active'",
-                    (user_id,),
-                ).fetchone()["count"]
-            )
+            created_count = self._count_owned_group_chats(connection, user_id)
             if create_limit is not None and created_count >= create_limit:
                 self.send_json({"error": f"当前角色最多只能创建 {create_limit} 个群聊"}, status=HTTPStatus.CONFLICT)
                 return
@@ -303,10 +335,8 @@ class GroupChatsMixin:
         self.send_json({"message": "群聊创建成功", "item": item}, status=HTTPStatus.CREATED)
 
     def create_group_chat_message(self, current, group_chat_id, payload):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
-        if not user_id:
-            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+        user, user_id = self._require_group_chat_user(current)
+        if not user:
             return
         message = str(payload.get("message", "")).strip()
         if not message:
@@ -316,13 +346,8 @@ class GroupChatsMixin:
             self.send_json({"error": "消息内容不能超过 2000 个字"}, status=HTTPStatus.BAD_REQUEST)
             return
         with open_db() as connection:
-            group_row = self._get_group_chat_row(connection, group_chat_id)
+            group_row, membership = self._require_group_membership(connection, group_chat_id, user_id)
             if not group_row:
-                self.send_json({"error": "群聊不存在"}, status=HTTPStatus.NOT_FOUND)
-                return
-            membership = self._get_group_membership(connection, group_chat_id, user_id)
-            if not membership:
-                self.send_json({"error": "你不在该群聊中"}, status=HTTPStatus.FORBIDDEN)
                 return
             muted_until = str(membership["muted_until"] or "").strip()
             if muted_until and muted_until > now_text():
@@ -345,14 +370,7 @@ class GroupChatsMixin:
                 """,
                 (created_at, user_id, preview, created_at, int(group_chat_id)),
             )
-            connection.execute(
-                """
-                UPDATE group_chat_members
-                SET last_read_message_at = ?, updated_at = ?
-                WHERE group_chat_id = ? AND user_id = ?
-                """,
-                (created_at, created_at, int(group_chat_id), user_id),
-            )
+            self._mark_group_chat_read(connection, group_chat_id, user_id, created_at)
             connection.commit()
             group_row = self._get_group_chat_row(connection, group_chat_id)
             members = self._list_group_members(connection, group_chat_id)
@@ -365,7 +383,7 @@ class GroupChatsMixin:
                 "created_at": created_at,
                 "username": user.get("username") or "",
                 "sender_role": user.get("role") or ROLE_GUEST,
-                "display_name": user.get("display_name") or user.get("username") or f"用户#{user_id}",
+                "display_name": self._group_chat_user_label(user_id, user.get("display_name"), user.get("username")),
                 "is_self": True,
             }
         target_ids = {int(member["user_id"]) for member in members if int(member["user_id"]) != user_id}
@@ -375,7 +393,7 @@ class GroupChatsMixin:
                 "group_chat_id": int(group_chat_id),
                 "group_name": group_row["name"] or "",
                 "from_user_id": user_id,
-                "from_name": user.get("display_name") or user.get("username") or f"用户#{user_id}",
+                "from_name": self._group_chat_user_label(user_id, user.get("display_name"), user.get("username")),
                 "message_preview": message[:50],
                 "created_at": created_at,
             },
@@ -384,8 +402,9 @@ class GroupChatsMixin:
         self.send_json({"message": "消息已发送", "item": item})
 
     def create_group_chat_invitation(self, current, group_chat_id, payload):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
+        user, user_id = self._require_group_chat_user(current)
+        if not user:
+            return
         invitee_user_id = int(payload.get("invitee_user_id") or 0)
         message = str(payload.get("message", "")).strip()
         if not invitee_user_id:
@@ -443,7 +462,7 @@ class GroupChatsMixin:
                 "group_chat_id": int(group_chat_id),
                 "group_name": group_row["name"] or "",
                 "from_user_id": user_id,
-                "from_name": user.get("display_name") or user.get("username") or f"用户#{user_id}",
+                "from_name": self._group_chat_user_label(user_id, user.get("display_name"), user.get("username")),
             },
             lambda session: int(session.get("user_id") or 0) == invitee_user_id,
         )
@@ -533,8 +552,9 @@ class GroupChatsMixin:
         return {"items": items, "unread_count": unread_count}
 
     def review_group_chat_invitation(self, current, invitation_id, payload):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
+        user, user_id = self._require_group_chat_user(current)
+        if not user:
+            return
         action = str(payload.get("action", "")).strip().lower()
         response_message = str(payload.get("response_message", "")).strip()
         if action not in {"accept", "reject"}:
@@ -607,15 +627,16 @@ class GroupChatsMixin:
                 "group_chat_id": int(row["group_chat_id"]),
                 "group_name": row["group_name"] or "",
                 "status": next_status,
-                "reviewed_by": user.get("display_name") or user.get("username") or f"用户#{user_id}",
+                "reviewed_by": self._group_chat_user_label(user_id, user.get("display_name"), user.get("username")),
             },
             lambda session: int(session.get("user_id") or 0) == int(row["inviter_user_id"] or 0),
         )
         self.send_json({"message": "已加入群聊" if action == "accept" else "已拒绝邀请"})
 
     def set_group_chat_member_mute(self, current, group_chat_id, payload):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
+        user, user_id = self._require_group_chat_user(current)
+        if not user:
+            return
         member_user_id = int(payload.get("member_user_id") or 0)
         muted = bool(payload.get("muted"))
         if not member_user_id:
@@ -655,8 +676,9 @@ class GroupChatsMixin:
         self.send_json({"message": "已禁言该成员" if muted else "已取消禁言"})
 
     def remove_group_chat_member(self, current, group_chat_id, member_user_id):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
+        user, user_id = self._require_group_chat_user(current)
+        if not user:
+            return
         member_user_id = int(member_user_id or 0)
         if not member_user_id:
             self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
@@ -708,53 +730,3 @@ class GroupChatsMixin:
         )
         self.send_json({"message": "已移除该成员"})
 
-    def delete_group_chat(self, current, group_chat_id):
-        user = current.get("user") or {}
-        user_id = int(user.get("id") or 0)
-        with open_db() as connection:
-            group_row, _ = self._require_group_owner(connection, group_chat_id, user_id)
-            if not group_row:
-                return
-            member_ids = {
-                int(row["user_id"])
-                for row in connection.execute(
-                    "SELECT user_id FROM group_chat_members WHERE group_chat_id = ? AND status = 'active'",
-                    (int(group_chat_id),),
-                ).fetchall()
-            }
-            timestamp = now_text()
-            connection.execute(
-                """
-                UPDATE group_chats
-                SET status = 'disbanded', updated_at = ?
-                WHERE id = ?
-                """,
-                (timestamp, int(group_chat_id)),
-            )
-            connection.execute(
-                """
-                UPDATE group_chat_members
-                SET status = 'removed', updated_at = ?
-                WHERE group_chat_id = ?
-                """,
-                (timestamp, int(group_chat_id)),
-            )
-            connection.execute(
-                """
-                UPDATE group_chat_invitations
-                SET status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
-                    responded_at = COALESCE(responded_at, ?)
-                WHERE group_chat_id = ?
-                """,
-                (timestamp, int(group_chat_id)),
-            )
-            connection.commit()
-        broadcast_auth_event(
-            {
-                "type": "group_chat_deleted",
-                "group_chat_id": int(group_chat_id),
-                "group_name": group_row["name"] or "",
-            },
-            lambda session: int(session.get("user_id") or 0) in member_ids,
-        )
-        self.send_json({"message": "群聊已解散"})

@@ -17,6 +17,44 @@ class ReviewRequestsMixin:
     MEMBER_CERT_REQUEST_RETENTION_DAYS = 5
     IDENTITY_SWAP_REQUEST_RETENTION_DAYS = 7
 
+    def _send_login_required(self):
+        self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+
+    def _send_member_link_required(self):
+        self.send_json({"error": "当前账号还未关联妖盟成员身份"}, status=HTTPStatus.BAD_REQUEST)
+
+    def _require_request_user(self, current):
+        user = current.get("user") or {}
+        user_id = int(user.get("id") or 0)
+        if not user_id:
+            self._send_login_required()
+            return None, 0
+        return user, user_id
+
+    def _parse_review_request_input(self, request_id, payload):
+        action = str(payload.get("action", "")).strip().lower()
+        if action not in {"approve", "reject"}:
+            self.send_json({"error": "操作无效"}, status=HTTPStatus.BAD_REQUEST)
+            return None, None, None
+        if not str(request_id).isdigit():
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+            return None, None, None
+        review_comment = str(payload.get("review_comment", payload.get("comment", ""))).strip()
+        return action, int(request_id), review_comment
+
+    def _send_request_already_reviewed(self, row, *, approved_label="已通过", rejected_label="已拒绝"):
+        status_label = approved_label if row["status"] == "approved" else rejected_label
+        self.send_json(
+            {
+                "error": f"该申请已处理过（{status_label}）",
+                "status": row["status"],
+                "reviewed_at": row["reviewed_at"],
+                "reviewer_id": row["reviewer_id"],
+                "review_comment": row["review_comment"] or "",
+            },
+            status=HTTPStatus.CONFLICT,
+        )
+
     def _parse_db_datetime(self, value):
         text = str(value or "").strip()
         if not text:
@@ -362,128 +400,13 @@ class ReviewRequestsMixin:
             "unread_count": 0 if mark_read else len(unread_ids),
         }
 
-    def create_member_cert_request(self, current, payload):
-        user = current.get("user") or {}
-        member_id = str(payload.get("member_id", "")).strip()
-        if not member_id.isdigit():
-            self.send_json({"error": "鍙傛暟鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        with open_db() as connection:
-            member = connection.execute("SELECT * FROM members WHERE id = ?", (member_id,)).fetchone()
-            if not member:
-                self.send_json({"error": "成员不存在"}, status=HTTPStatus.NOT_FOUND)
-                return
-            if int(member["verified"] or 0) == 1:
-                self.send_json({"error": "该成员已经认证"}, status=HTTPStatus.CONFLICT)
-                return
-            exists = connection.execute(
-                """
-                SELECT id FROM member_cert_requests
-                WHERE user_id = ? AND member_id = ? AND status = 'pending'
-                """,
-                (user.get("id"), member_id),
-            ).fetchone()
-            if exists:
-                self.send_json({"error": "浣犲凡缁忔彁浜よ繃璇ユ垚鍛樼殑璁よ瘉鐢宠"}, status=HTTPStatus.CONFLICT)
-                return
-            timestamp = now_text()
-            connection.execute(
-                """
-                INSERT INTO member_cert_requests (user_id, member_id, alliance, status, created_at)
-                VALUES (?, ?, ?, 'pending', ?)
-                """,
-                (user.get("id"), member_id, member["alliance"], timestamp),
-            )
-            connection.commit()
-        self.send_json({"message": "认证申请已提交"}, status=HTTPStatus.CREATED)
-
     def review_member_cert_request(self, request_id, payload, current):
-        action = str(payload.get("action", "")).strip().lower()
-        review_comment = str(payload.get("review_comment", payload.get("comment", ""))).strip()
-        if action not in {"approve", "reject"}:
-            self.send_json({"error": "鎿嶄綔鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
+        action, request_id, review_comment = self._parse_review_request_input(request_id, payload)
+        if not action:
             return
-        if not str(request_id).isdigit():
-            self.send_json({"error": "鍙傛暟鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
+        user, _ = self._require_request_user(current)
+        if not user:
             return
-        user = current.get("user") or {}
-        with open_db() as connection:
-            row = connection.execute(
-                """
-                SELECT r.*, u.username, u.role AS user_role, u.alliance AS user_alliance, m.verified AS member_verified
-                FROM member_cert_requests r
-                LEFT JOIN users u ON u.id = r.user_id
-                LEFT JOIN members m ON m.id = r.member_id
-                WHERE r.id = ?
-                """,
-                (request_id,),
-            ).fetchone()
-            if not row:
-                self.send_json({"error": "申请不存在"}, status=HTTPStatus.NOT_FOUND)
-                return
-            if current.get("user", {}).get("role") == ROLE_ALLIANCEADMIN and row["alliance"] != user.get("alliance", ""):
-                self.send_json({"error": "鍙兘瀹℃牳鏈仈鐩熺殑璁よ瘉鐢宠"}, status=HTTPStatus.FORBIDDEN)
-                return
-            if action == "approve":
-                if int(row["member_verified"] or 0) == 1:
-                    self.send_json({"error": "该成员已经认证"}, status=HTTPStatus.CONFLICT)
-                    return
-                timestamp = now_text()
-                verified_league = normalize_league_scope(row["alliance"])
-                connection.execute(
-                    "UPDATE members SET verified = 1, updated_at = ? WHERE id = ?",
-                    (timestamp, row["member_id"]),
-                )
-                connection.execute(
-                    """
-                    UPDATE users
-                    SET member_id = ?, member = ?, role = ?, alliance = ?, league = ?, member_unbind_available_at = NULL
-                    WHERE id = ?
-                    """,
-                    (row["member_id"], row["member_id"], ROLE_VERIFIEDUSER, row["alliance"], verified_league, row["user_id"]),
-                )
-                update_user_sessions_for_user(
-                    row["user_id"],
-                    member_id=row["member_id"],
-                    member=row["member_id"],
-                    role=ROLE_VERIFIEDUSER,
-                    alliance=row["alliance"],
-                    league=verified_league,
-                    member_unbind_available_at=None,
-                )
-                connection.execute(
-                    """
-                    UPDATE member_cert_requests
-                    SET status = 'approved', reviewed_at = ?, reviewer_id = ?
-                    WHERE id = ?
-                    """,
-                    (timestamp, user.get("id"), request_id),
-                )
-                connection.commit()
-                self.send_json({"message": "璁よ瘉鐢宠宸查€氳繃"})
-                return
-            timestamp = now_text()
-            connection.execute(
-                """
-                UPDATE member_cert_requests
-                SET status = 'rejected', reviewed_at = ?, reviewer_id = ?
-                WHERE id = ?
-                """,
-                (timestamp, user.get("id"), request_id),
-            )
-            connection.commit()
-        self.send_json({"message": "认证申请已拒绝"})
-
-    def review_member_cert_request(self, request_id, payload, current):
-        action = str(payload.get("action", "")).strip().lower()
-        review_comment = str(payload.get("review_comment", payload.get("comment", ""))).strip()
-        if action not in {"approve", "reject"}:
-            self.send_json({"error": "鎿嶄綔鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if not str(request_id).isdigit():
-            self.send_json({"error": "鍙傛暟鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        user = current.get("user") or {}
         reviewer_name = user.get("display_name") or user.get("username") or "管理员"
         with member_cert_request_review_lock:
             with open_db() as connection:
@@ -505,17 +428,7 @@ class ReviewRequestsMixin:
                     return
                 if row["status"] != "pending":
                     connection.rollback()
-                    status_label = "已通过" if row["status"] == "approved" else "已拒绝"
-                    self.send_json(
-                        {
-                            "error": f"该申请已处理过（{status_label}）",
-                            "status": row["status"],
-                            "reviewed_at": row["reviewed_at"],
-                            "reviewer_id": row["reviewer_id"],
-                            "review_comment": row["review_comment"] or "",
-                        },
-                        status=HTTPStatus.CONFLICT,
-                    )
+                    self._send_request_already_reviewed(row)
                     return
                 if current.get("user", {}).get("role") == ROLE_ALLIANCEADMIN:
                     member_scope = connection.execute(
@@ -524,7 +437,7 @@ class ReviewRequestsMixin:
                     ).fetchone()
                     if not self.scope_matches_user_league(connection, user, self.get_member_cert_scope_name(member_scope)):
                         connection.rollback()
-                        self.send_json({"error": "鍙兘瀹℃牳鑷繁绠＄悊鑼冨洿鍐呯殑璁よ瘉鐢宠"}, status=HTTPStatus.FORBIDDEN)
+                        self.send_json({"error": "只能审核自己管理范围内的认证申请"}, status=HTTPStatus.FORBIDDEN)
                         return
                 timestamp = now_text()
                 if action == "approve":
@@ -585,7 +498,7 @@ class ReviewRequestsMixin:
                         or int(session.get("user_id") or 0) in reviewer_ids
                         or int(session.get("user_id") or 0) == int(row["user_id"] or 0),
                     )
-                    self.send_json({"message": "璁よ瘉鐢宠宸查€氳繃"})
+                    self.send_json({"message": "认证申请已通过"})
                     return
                 updated = connection.execute(
                     """
@@ -621,10 +534,12 @@ class ReviewRequestsMixin:
         self.send_json({"message": "认证申请已拒绝"})
 
     def create_member_cert_request(self, current, payload):
-        user = current.get("user") or {}
+        user, user_id = self._require_request_user(current)
+        if not user:
+            return
         member_id = str(payload.get("member_id", "")).strip()
         if not member_id.isdigit():
-            self.send_json({"error": "鍙傛暟鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
+            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
             return
         cooldown_error = self.get_member_unbind_cooldown_error(user)
         if cooldown_error:
@@ -644,10 +559,10 @@ class ReviewRequestsMixin:
                 SELECT id FROM member_cert_requests
                 WHERE user_id = ? AND member_id = ? AND status = 'pending'
                 """,
-                (user.get("id"), member_id),
+                (user_id, member_id),
             ).fetchone()
             if exists:
-                self.send_json({"error": "浣犲凡缁忔彁浜よ繃璇ユ垚鍛樼殑璁よ瘉鐢宠"}, status=HTTPStatus.CONFLICT)
+                self.send_json({"error": "你已经提交过该成员的认证申请"}, status=HTTPStatus.CONFLICT)
                 return
             timestamp = now_text()
             connection.execute(
@@ -655,7 +570,7 @@ class ReviewRequestsMixin:
                 INSERT INTO member_cert_requests (user_id, member_id, alliance, status, review_comment, is_read, created_at)
                 VALUES (?, ?, ?, 'pending', '', 0, ?)
                 """,
-                (user.get("id"), member_id, member["alliance"], timestamp),
+                (user_id, member_id, member["alliance"], timestamp),
             )
             request_id = int(connection.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
             reviewer_ids = self.get_member_cert_reviewer_ids(connection, member)
@@ -675,13 +590,12 @@ class ReviewRequestsMixin:
         self.send_json({"message": "认证申请已提交"}, status=HTTPStatus.CREATED)
 
     def unlink_current_user_member(self, current):
-        user = current.get("user") or {}
-        if not user.get("id"):
-            self.send_json({"error": "璇峰厛鐧诲綍"}, status=HTTPStatus.UNAUTHORIZED)
+        user, user_id = self._require_request_user(current)
+        if not user:
             return
         member_id = user.get("member_id") or user.get("member")
         if not member_id:
-            self.send_json({"error": "褰撳墠璐﹀彿杩樻湭鍏宠仈濡栫洘鎴愬憳韬唤"}, status=HTTPStatus.BAD_REQUEST)
+            self._send_member_link_required()
             return
 
         current_role = user.get("role") or ROLE_GUEST
@@ -698,7 +612,7 @@ class ReviewRequestsMixin:
                 FROM users
                 WHERE id = ?
                 """,
-                (user["id"],),
+                (user_id,),
             ).fetchone()
             if not db_user:
                 self.send_json({"error": "用户不存在"}, status=HTTPStatus.NOT_FOUND)
@@ -706,7 +620,7 @@ class ReviewRequestsMixin:
 
             linked_member_id = db_user["member_id"] or db_user["member"]
             if not linked_member_id:
-                self.send_json({"error": "褰撳墠璐﹀彿杩樻湭鍏宠仈濡栫洘鎴愬憳韬唤"}, status=HTTPStatus.BAD_REQUEST)
+                self._send_member_link_required()
                 return
             if keep_role:
                 next_league = normalize_league_scope(db_user["league"])
@@ -726,12 +640,12 @@ class ReviewRequestsMixin:
                     member_unbind_available_at = ?
                 WHERE id = ?
                 """,
-                (next_role, next_alliance, next_league, available_at, user["id"]),
+                (next_role, next_alliance, next_league, available_at, user_id),
             )
             connection.commit()
 
         update_user_sessions_for_user(
-            user["id"],
+            user_id,
             member_id=None,
             member=None,
             role=next_role,
@@ -747,9 +661,8 @@ class ReviewRequestsMixin:
         )
 
     def link_current_user_member(self, current, payload):
-        user = current.get("user") or {}
-        if not user.get("id"):
-            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+        user, user_id = self._require_request_user(current)
+        if not user:
             return
         if (user.get("role") or "") not in {ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN}:
             self.send_json({"error": "当前账号不是盟主或超级管理员，不能直接成为成员"}, status=HTTPStatus.FORBIDDEN)
@@ -772,7 +685,7 @@ class ReviewRequestsMixin:
 
             db_user = connection.execute(
                 "SELECT id, role, member_id, member, alliance FROM users WHERE id = ?",
-                (user["id"],),
+                (user_id,),
             ).fetchone()
             if not db_user:
                 self.send_json({"error": "用户不存在"}, status=HTTPStatus.NOT_FOUND)
@@ -807,12 +720,12 @@ class ReviewRequestsMixin:
                 SET member_id = ?, member = ?, alliance = ?, member_unbind_available_at = NULL
                 WHERE id = ?
                 """,
-                (int(member_id), int(member_id), member["alliance"], user["id"]),
+                (int(member_id), int(member_id), member["alliance"], user_id),
             )
             connection.commit()
 
         update_user_sessions_for_user(
-            user["id"],
+            user_id,
             member_id=int(member_id),
             member=int(member_id),
             alliance=member["alliance"],
@@ -938,13 +851,11 @@ class ReviewRequestsMixin:
         }
 
     def create_identity_swap_request(self, current, payload):
-        user = current.get("user") or {}
-        current_user_id = int(user.get("id") or 0)
+        user, current_user_id = self._require_request_user(current)
+        if not user:
+            return
         target_member_id = str(payload.get("member_id", "")).strip()
         message = str(payload.get("message", payload.get("swap_message", ""))).strip()
-        if not current_user_id:
-            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
-            return
         if not target_member_id.isdigit():
             self.send_json({"error": "请选择要交换的认证成员"}, status=HTTPStatus.BAD_REQUEST)
             return
@@ -1043,21 +954,14 @@ class ReviewRequestsMixin:
         self.send_json({"message": "身份交换申请已提交，等待对方确认"}, status=HTTPStatus.CREATED)
 
     def review_identity_swap_request(self, request_id, payload, current):
-        action = str(payload.get("action", "")).strip().lower()
-        review_comment = str(payload.get("review_comment", payload.get("comment", ""))).strip()
-        if action not in {"approve", "reject"}:
-            self.send_json({"error": "操作无效"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if not str(request_id).isdigit():
-            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+        action, request_id, review_comment = self._parse_review_request_input(request_id, payload)
+        if not action:
             return
 
-        user = current.get("user") or {}
-        reviewer_id = int(user.get("id") or 0)
-        reviewer_name = user.get("display_name") or user.get("username") or "用户"
-        if not reviewer_id:
-            self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+        user, reviewer_id = self._require_request_user(current)
+        if not user:
             return
+        reviewer_name = user.get("display_name") or user.get("username") or "用户"
 
         with identity_swap_request_review_lock:
             with open_db() as connection:
@@ -1081,16 +985,7 @@ class ReviewRequestsMixin:
                     return
                 if row["status"] != "pending":
                     connection.rollback()
-                    status_label = "已同意" if row["status"] == "approved" else "已拒绝"
-                    self.send_json(
-                        {
-                            "error": f"该申请已处理过（{status_label}）",
-                            "status": row["status"],
-                            "reviewed_at": row["reviewed_at"],
-                            "review_comment": row["review_comment"] or "",
-                        },
-                        status=HTTPStatus.CONFLICT,
-                    )
+                    self._send_request_already_reviewed(row, approved_label="已同意")
                     return
 
                 requester_row = connection.execute(
@@ -1268,116 +1163,9 @@ class ReviewRequestsMixin:
         }
 
     def create_admin_role_request(self, current, payload):
-        user = current.get("user") or {}
-        alliance = str(payload.get("alliance", "")).strip()
-        if not alliance:
-            self.send_json({"error": "璇烽€夋嫨鑱旂洘"}, status=HTTPStatus.BAD_REQUEST)
+        user, user_id = self._require_request_user(current)
+        if not user:
             return
-        with open_db() as connection:
-            known_alliances = set(self.get_known_alliances(connection))
-            if alliance not in known_alliances:
-                self.send_json({"error": "联盟不存在"}, status=HTTPStatus.NOT_FOUND)
-                return
-            row = connection.execute("SELECT role, alliance FROM users WHERE id = ?", (user.get("id"),)).fetchone()
-            if not row:
-                self.send_json({"error": "用户不存在"}, status=HTTPStatus.NOT_FOUND)
-                return
-            if row["role"] in {ROLE_ALLIANCEADMIN, ROLE_SUPERADMIN}:
-                self.send_json({"error": "褰撳墠瑙掕壊鏃犻渶鍐嶆鐢宠"}, status=HTTPStatus.CONFLICT)
-                return
-            exists = connection.execute(
-                """
-                SELECT id FROM admin_role_requests
-                WHERE user_id = ? AND status = 'pending'
-                """,
-                (user.get("id"),),
-            ).fetchone()
-            if exists:
-                self.send_json({"error": "浣犲凡缁忔湁寰呭鏍哥殑鐢宠"}, status=HTTPStatus.CONFLICT)
-                return
-            timestamp = now_text()
-            connection.execute(
-                """
-                INSERT INTO admin_role_requests (user_id, alliance, status, is_read, created_at)
-                VALUES (?, ?, 'pending', 0, ?)
-                """,
-                (user.get("id"), alliance, timestamp),
-            )
-            connection.commit()
-        self.send_json({"message": "鑱旂洘绠＄悊鍛樼敵璇峰凡鎻愪氦"}, status=HTTPStatus.CREATED)
-
-    def review_admin_role_request(self, request_id, payload, current):
-        action = str(payload.get("action", "")).strip().lower()
-        review_comment = str(payload.get("review_comment", payload.get("comment", ""))).strip()
-        if action not in {"approve", "reject"}:
-            self.send_json({"error": "鎿嶄綔鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if not str(request_id).isdigit():
-            self.send_json({"error": "鍙傛暟鏃犳晥"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        with open_db() as connection:
-            row = connection.execute(
-                """
-                SELECT r.*, u.username, u.role AS current_role
-                FROM admin_role_requests r
-                LEFT JOIN users u ON u.id = r.user_id
-                WHERE r.id = ?
-                """,
-                (request_id,),
-            ).fetchone()
-            if not row:
-                self.send_json({"error": "申请不存在"}, status=HTTPStatus.NOT_FOUND)
-                return
-            if action == "approve":
-                timestamp = now_text()
-                connection.execute(
-                    """
-                    UPDATE users
-                    SET role = ?, alliance = ?
-                    WHERE id = ?
-                    """,
-                    (ROLE_ALLIANCEADMIN, row["alliance"], row["user_id"]),
-                )
-                update_user_sessions_for_user(
-                    row["user_id"],
-                    role=ROLE_ALLIANCEADMIN,
-                    alliance=row["alliance"],
-                    is_admin=False,
-                )
-                connection.execute(
-                    """
-                    UPDATE admin_role_requests
-                    SET status = 'approved', reviewed_at = ?, reviewer_id = ?, review_comment = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        timestamp,
-                        current.get("user", {}).get("id"),
-                        str(payload.get("review_comment", payload.get("comment", ""))).strip(),
-                        request_id,
-                    ),
-                )
-                connection.commit()
-                self.send_json({"message": "鑱旂洘绠＄悊鍛樼敵璇峰凡閫氳繃"})
-                return
-            timestamp = now_text()
-            connection.execute(
-                """
-                UPDATE admin_role_requests
-                SET status = 'rejected', reviewed_at = ?, reviewer_id = ?, review_comment = ?
-                WHERE id = ?
-                """,
-                (
-                    timestamp,
-                    current.get("user", {}).get("id"),
-                    str(payload.get("review_comment", payload.get("comment", ""))).strip(),
-                    request_id,
-                ),
-            )
-            connection.commit()
-        self.send_json({"message": "鑱旂洘绠＄悊鍛樼敵璇峰凡鎷掔粷"})
-    def create_admin_role_request(self, current, payload):
-        user = current.get("user") or {}
         request_type = str(payload.get("request_type", ROLE_REQUEST_TYPE_GUILD)).strip().lower()
         target_name = str(payload.get("target_name", payload.get("alliance", ""))).strip()
         if request_type not in {ROLE_REQUEST_TYPE_GUILD, ROLE_REQUEST_TYPE_ALLIANCE}:
@@ -1397,7 +1185,7 @@ class ReviewRequestsMixin:
             if target_name not in known_targets:
                 self.send_json({"error": "目标不存在"}, status=HTTPStatus.NOT_FOUND)
                 return
-            row = connection.execute("SELECT role, alliance, league FROM users WHERE id = ?", (user.get("id"),)).fetchone()
+            row = connection.execute("SELECT role, alliance, league FROM users WHERE id = ?", (user_id,)).fetchone()
             if not row:
                 self.send_json({"error": "用户不存在"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -1409,7 +1197,7 @@ class ReviewRequestsMixin:
                 SELECT id FROM admin_role_requests
                 WHERE user_id = ? AND status = 'pending'
                 """,
-                (user.get("id"),),
+                (user_id,),
             ).fetchone()
             if exists:
                 self.send_json({"error": "你已经有待审核的申请"}, status=HTTPStatus.CONFLICT)
@@ -1420,7 +1208,7 @@ class ReviewRequestsMixin:
                 INSERT INTO admin_role_requests (user_id, alliance, request_type, status, is_read, created_at)
                 VALUES (?, ?, ?, 'pending', 0, ?)
                 """,
-                (user.get("id"), target_name, request_type, timestamp),
+                (user_id, target_name, request_type, timestamp),
             )
             request_id = connection.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
             connection.commit()
@@ -1438,17 +1226,14 @@ class ReviewRequestsMixin:
         self.send_json({"message": f"{label}申请已提交"}, status=HTTPStatus.CREATED)
 
     def review_admin_role_request(self, request_id, payload, current):
-        action = str(payload.get("action", "")).strip().lower()
-        if action not in {"approve", "reject"}:
-            self.send_json({"error": "操作无效"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if not str(request_id).isdigit():
-            self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
+        action, request_id, review_comment = self._parse_review_request_input(request_id, payload)
+        if not action:
             return
 
-        review_comment = str(payload.get("review_comment", payload.get("comment", ""))).strip()
-        reviewer_id = current.get("user", {}).get("id")
-        reviewer_name = current.get("user", {}).get("display_name") or current.get("user", {}).get("username") or "SuperAdmin"
+        user, reviewer_id = self._require_request_user(current)
+        if not user:
+            return
+        reviewer_name = user.get("display_name") or user.get("username") or "SuperAdmin"
 
         with admin_role_request_review_lock:
             with open_db() as connection:
@@ -1469,17 +1254,7 @@ class ReviewRequestsMixin:
                     return
                 if row["status"] != "pending":
                     connection.rollback()
-                    status_label = "已通过" if row["status"] == "approved" else "已拒绝"
-                    self.send_json(
-                        {
-                            "error": f"该申请已处理过（{status_label}）",
-                            "status": row["status"],
-                            "reviewed_at": row["reviewed_at"],
-                            "reviewer_id": row["reviewer_id"],
-                            "review_comment": row["review_comment"] or "",
-                        },
-                        status=HTTPStatus.CONFLICT,
-                    )
+                    self._send_request_already_reviewed(row)
                     return
 
                 timestamp = now_text()

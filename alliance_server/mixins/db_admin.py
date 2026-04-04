@@ -12,11 +12,30 @@ from auth import (
 class DatabaseAdminMixin:
     _uploads_export_lock = threading.Lock()
 
-    def handle_db_api(self, parsed):
-        """Handle database admin GET requests."""
+    def ensure_db_admin_access(self):
         current = get_current_auth(self)
         if not current.get("authenticated") or current.get("user", {}).get("role") != ROLE_SUPERADMIN:
             self.send_json({"error": "只有 SuperAdmin 可以访问数据库管理"}, status=HTTPStatus.FORBIDDEN)
+            return False
+        return True
+
+    def get_allowed_db_tables(self, connection):
+        rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        return [row["name"] for row in rows if row["name"] != "admins"]
+
+    def validate_db_table_name(self, connection, table_name):
+        if table_name not in set(self.get_allowed_db_tables(connection)):
+            raise ValueError("数据表不存在")
+        return table_name
+
+    def quote_db_identifier(self, value):
+        return f'"{str(value).replace(chr(34), chr(34) * 2)}"'
+
+    def handle_db_api(self, parsed):
+        """Handle database admin GET requests."""
+        if not self.ensure_db_admin_access():
             return
 
         path_parts = parsed.path.strip("/").split("/")
@@ -46,19 +65,19 @@ class DatabaseAdminMixin:
 
     def list_db_tables(self):
         with open_db() as connection:
-            rows = connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            ).fetchall()
-        tables = [row["name"] for row in rows if row["name"] != "admins"]
-        return {"tables": tables}
+            return {"tables": self.get_allowed_db_tables(connection)}
 
     def get_db_table_data(self, table_name):
         with open_db() as connection:
             try:
-                columns = [row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()]
-                rows = connection.execute(f"SELECT * FROM {table_name} ORDER BY id DESC").fetchall()
+                safe_table_name = self.validate_db_table_name(connection, table_name)
+                quoted_table_name = self.quote_db_identifier(safe_table_name)
+                columns = [row["name"] for row in connection.execute(f"PRAGMA table_info({quoted_table_name})").fetchall()]
+                rows = connection.execute(f"SELECT * FROM {quoted_table_name} ORDER BY id DESC").fetchall()
                 items = [dict(row) for row in rows]
-                return {"table": table_name, "columns": columns, "items": items, "count": len(items)}
+                return {"table": safe_table_name, "columns": columns, "items": items, "count": len(items)}
+            except ValueError as error:
+                return {"error": str(error)}
             except sqlite3.OperationalError as error:
                 return {"error": str(error)}
 
@@ -68,18 +87,20 @@ class DatabaseAdminMixin:
 
         with open_db() as connection:
             try:
-                row = connection.execute(f"SELECT * FROM {table_name} WHERE id = ?", (record_id,)).fetchone()
+                safe_table_name = self.validate_db_table_name(connection, table_name)
+                quoted_table_name = self.quote_db_identifier(safe_table_name)
+                row = connection.execute(f"SELECT * FROM {quoted_table_name} WHERE id = ?", (record_id,)).fetchone()
                 if not row:
                     return {"error": "记录不存在"}
                 return {"item": dict(row)}
+            except ValueError as error:
+                return {"error": str(error)}
             except sqlite3.OperationalError as error:
                 return {"error": str(error)}
 
     def handle_db_api_post(self, parsed):
         """Handle database admin POST requests."""
-        current = get_current_auth(self)
-        if not current.get("authenticated") or current.get("user", {}).get("role") != ROLE_SUPERADMIN:
-            self.send_json({"error": "只有 SuperAdmin 可以访问数据库管理"}, status=HTTPStatus.FORBIDDEN)
+        if not self.ensure_db_admin_access():
             return
 
         path_parts = parsed.path.strip("/").split("/")
@@ -95,7 +116,9 @@ class DatabaseAdminMixin:
     def create_db_record(self, table_name, payload):
         try:
             with open_db() as connection:
-                columns = [row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()]
+                safe_table_name = self.validate_db_table_name(connection, table_name)
+                quoted_table_name = self.quote_db_identifier(safe_table_name)
+                columns = [row["name"] for row in connection.execute(f"PRAGMA table_info({quoted_table_name})").fetchall()]
                 insert_columns = [column for column in columns if column != "id"]
 
                 values = []
@@ -110,21 +133,22 @@ class DatabaseAdminMixin:
                     return
 
                 placeholders = ", ".join(["?" for _ in values])
-                sql = f"INSERT INTO {table_name} ({', '.join(values)}) VALUES ({placeholders})"
+                quoted_columns = ", ".join(self.quote_db_identifier(column) for column in values)
+                sql = f"INSERT INTO {quoted_table_name} ({quoted_columns}) VALUES ({placeholders})"
                 cursor = connection.execute(sql, params)
                 connection.commit()
 
                 new_id = cursor.lastrowid
-                new_row = connection.execute(f"SELECT * FROM {table_name} WHERE id = ?", (new_id,)).fetchone()
+                new_row = connection.execute(f"SELECT * FROM {quoted_table_name} WHERE id = ?", (new_id,)).fetchone()
                 self.send_json({"message": "记录创建成功", "item": dict(new_row)}, status=HTTPStatus.CREATED)
+        except ValueError as error:
+            self.send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
         except sqlite3.OperationalError as error:
             self.send_json({"error": f"创建失败: {error}"}, status=HTTPStatus.BAD_REQUEST)
 
     def handle_db_api_put(self, parsed):
         """Handle database admin PUT requests."""
-        current = get_current_auth(self)
-        if not current.get("authenticated") or current.get("user", {}).get("role") != ROLE_SUPERADMIN:
-            self.send_json({"error": "只有 SuperAdmin 可以访问数据库管理"}, status=HTTPStatus.FORBIDDEN)
+        if not self.ensure_db_admin_access():
             return
 
         path_parts = parsed.path.strip("/").split("/")
@@ -145,8 +169,10 @@ class DatabaseAdminMixin:
 
         try:
             with open_db() as connection:
+                safe_table_name = self.validate_db_table_name(connection, table_name)
+                quoted_table_name = self.quote_db_identifier(safe_table_name)
                 previous_row = None
-                if table_name == "users":
+                if safe_table_name == "users":
                     previous_row = connection.execute(
                         "SELECT id, role, alliance, league, is_active FROM users WHERE id = ?",
                         (record_id,),
@@ -155,14 +181,14 @@ class DatabaseAdminMixin:
                         self.send_json({"error": "记录不存在"}, status=HTTPStatus.NOT_FOUND)
                         return
 
-                columns = [row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()]
+                columns = [row["name"] for row in connection.execute(f"PRAGMA table_info({quoted_table_name})").fetchall()]
                 update_columns = [column for column in columns if column != "id"]
 
                 set_clauses = []
                 params = []
                 for column in update_columns:
                     if column in payload:
-                        set_clauses.append(f"{column} = ?")
+                        set_clauses.append(f"{self.quote_db_identifier(column)} = ?")
                         params.append(payload[column])
 
                 if not set_clauses:
@@ -170,7 +196,7 @@ class DatabaseAdminMixin:
                     return
 
                 params.append(record_id)
-                sql = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE id = ?"
+                sql = f"UPDATE {quoted_table_name} SET {', '.join(set_clauses)} WHERE id = ?"
                 cursor = connection.execute(sql, params)
                 connection.commit()
 
@@ -195,16 +221,16 @@ class DatabaseAdminMixin:
                     ):
                         invalidate_user_sessions(int(record_id), False)
 
-                new_row = connection.execute(f"SELECT * FROM {table_name} WHERE id = ?", (record_id,)).fetchone()
+                new_row = connection.execute(f"SELECT * FROM {quoted_table_name} WHERE id = ?", (record_id,)).fetchone()
                 self.send_json({"message": "记录更新成功", "item": dict(new_row)})
+        except ValueError as error:
+            self.send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
         except sqlite3.OperationalError as error:
             self.send_json({"error": f"更新失败: {error}"}, status=HTTPStatus.BAD_REQUEST)
 
     def handle_db_api_delete(self, parsed):
         """Handle database admin DELETE requests."""
-        current = get_current_auth(self)
-        if not current.get("authenticated") or current.get("user", {}).get("role") != ROLE_SUPERADMIN:
-            self.send_json({"error": "只有 SuperAdmin 可以访问数据库管理"}, status=HTTPStatus.FORBIDDEN)
+        if not self.ensure_db_admin_access():
             return
 
         path_parts = parsed.path.strip("/").split("/")
@@ -224,7 +250,9 @@ class DatabaseAdminMixin:
 
         try:
             with open_db() as connection:
-                cursor = connection.execute(f"DELETE FROM {table_name} WHERE id = ?", (record_id,))
+                safe_table_name = self.validate_db_table_name(connection, table_name)
+                quoted_table_name = self.quote_db_identifier(safe_table_name)
+                cursor = connection.execute(f"DELETE FROM {quoted_table_name} WHERE id = ?", (record_id,))
                 connection.commit()
 
                 if cursor.rowcount == 0:
@@ -232,6 +260,8 @@ class DatabaseAdminMixin:
                     return
 
                 self.send_json({"message": "记录删除成功"})
+        except ValueError as error:
+            self.send_json({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
         except sqlite3.OperationalError as error:
             self.send_json({"error": f"删除失败: {error}"}, status=HTTPStatus.BAD_REQUEST)
 

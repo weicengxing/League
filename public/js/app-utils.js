@@ -16,6 +16,11 @@ function buildGuildKey(member) {
   return [member.guild_code || "", member.guild_prefix || "", member.guild || ""].join("|");
 }
 
+function parseGuildKey(guildKey) {
+  const [guild_code = "", guild_prefix = "", guild = ""] = String(guildKey || "").split("|");
+  return { guild_code, guild_prefix, guild };
+}
+
 function getGuildDisplayName(member) {
   return [member.guild_code || "", member.guild_prefix || "", member.guild || ""].filter(Boolean).join(" ");
 }

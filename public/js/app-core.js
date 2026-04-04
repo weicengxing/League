@@ -13,8 +13,12 @@ const customSelectRegistry = new Map();
 let customSelectEventsBound = false;
 const pendingMelonImageFiles = new Map();
 
+function isSocketActive(socket) {
+  return socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING);
+}
+
 function connectMelonWebSocket() {
-  if (melonWs && melonWs.readyState === WebSocket.OPEN) {
+  if (isSocketActive(melonWs)) {
     return;
   }
   
@@ -63,20 +67,6 @@ function connectMelonWebSocket() {
   }
 }
 
-function handleNewMelonPost(item) {
-  // Add to local announcements state (optimistic)
-  if (!state.announcements.find(a => a.id === item.id)) {
-    state.announcements.unshift(item);
-  }
-  // Re-render melon list
-  renderFeeds();
-  renderAdminAnnouncements();
-  // Show notification (only for real items, not temp ones)
-  if (!String(item.id).startsWith('temp_')) {
-    toast(`新瓜动态：${item.title}`);
-  }
-}
-
 async function handleMelonNewEvent(eventData) {
   const melonId = String(eventData?.id || "");
   const alreadyPresent = melonId ? state.announcements.some((item) => String(item.id) === melonId) : false;
@@ -108,7 +98,7 @@ function disconnectMelonWebSocket() {
 
 function connectAuthWebSocket() {
   if (!state.me?.authenticated) return;
-  if (authWs && authWs.readyState === WebSocket.OPEN) return;
+  if (isSocketActive(authWs)) return;
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = `${protocol}//${window.location.host}/ws/auth`;
@@ -1186,7 +1176,7 @@ function bindEvents() {
     }
   });
   
-  // 鐡滄鍙戝竷琛ㄥ崟
+  // 瓜棚发布表单
   const melonPostForm = document.querySelector("#melonPostForm");
   if (melonPostForm) {
     melonPostForm.addEventListener("submit", handleMelonPostSubmit);
@@ -1199,7 +1189,7 @@ function bindEvents() {
     }
   });
   
-  // 鐡滄鎾ゅ洖鎸夐挳
+  // 瓜棚撤回按钮
   document.addEventListener("click", (event) => {
     const revokeBtn = event.target.closest("[data-melon-revoke]");
     if (revokeBtn instanceof HTMLElement) {

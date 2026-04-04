@@ -677,6 +677,14 @@ function renderSimplePagination(kind, page) {
   `;
 }
 
+function isAnnouncementCategory(category) {
+  return ["公告", "鍏憡"].includes(String(category || ""));
+}
+
+function isMelonCategory(category) {
+  return ["瓜棚", "鐡滄"].includes(String(category || ""));
+}
+
 function getSearchMatchedHills() {
   const keyword = state.search.trim();
   const hills = getDerivedHills();
@@ -843,15 +851,16 @@ function renderRanking() {
     const fragment = els.rankingItemTemplate.content.cloneNode(true);
     fragment.querySelector(".ranking-item__index").textContent = String((page.currentPage - 1) * page.pageSize + index + 1);
     fragment.querySelector(".ranking-item__name").textContent = member.name;
-    fragment.querySelector(".ranking-item__meta").textContent = `${member.hill || "默认联盟"} · ${getGuildDisplayName(member)} · 等级 ${member.role || "-"} · ${member.realm || "-"}`;    fragment.querySelector(".ranking-item__power").textContent = formatNumber(member.power);
+    fragment.querySelector(".ranking-item__meta").textContent = `${member.hill || "默认联盟"} · ${getGuildDisplayName(member)} · 等级 ${member.role || "-"} · ${member.realm || "-"}`;
+    fragment.querySelector(".ranking-item__power").textContent = formatNumber(member.power);
     els.rankingList.appendChild(fragment);
   });
   els.rankingList.insertAdjacentHTML("beforeend", renderSimplePagination("ranking-page", page));
 }
 
 function renderFeeds() {
-  const announcements = state.announcements.filter((item) => ["公告", "鍏憡"].includes(item.category));
-  const melonPosts = state.announcements.filter((item) => ["瓜棚", "鐡滄"].includes(item.category));
+  const announcements = state.announcements.filter((item) => isAnnouncementCategory(item.category));
+  const melonPosts = state.announcements.filter((item) => isMelonCategory(item.category));
   const announcementPage = paginateItems(announcements, state.announcementPage, 5);
   const melonPage = paginateItems(melonPosts, state.melonPage, 5);
   state.announcementPage = announcementPage.currentPage;

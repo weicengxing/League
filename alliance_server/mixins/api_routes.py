@@ -4,6 +4,32 @@ from auth import ROLE_GUEST, get_current_auth
 
 
 class ApiRoutesMixin:
+    def _require_current_auth(self, *, status=HTTPStatus.UNAUTHORIZED):
+        current = get_current_auth(self)
+        if not current.get("authenticated"):
+            self.send_json({"error": "请先登录"}, status=status)
+            return None
+        return current
+
+    def _require_normal_current(self, *, status=HTTPStatus.UNAUTHORIZED, error_message="请先登录普通账号"):
+        current = self._require_current_auth(status=status)
+        if not current:
+            return None
+        if current.get("is_admin"):
+            self.send_json({"error": error_message}, status=status)
+            return None
+        return current
+
+    def _query_flag(self, query, key):
+        return query.get(key, ["0"])[0].strip().lower() in {"1", "true", "yes"}
+
+    def _query_int(self, query, key, *, default, minimum, maximum):
+        value = query.get(key, [str(default)])[0]
+        try:
+            return max(minimum, min(maximum, int(value)))
+        except (TypeError, ValueError):
+            return default
+
     def handle_api_get(self, parsed):
         if parsed.path == "/api/health":
             self.send_json({"status": "ok", "time": now_text()})
@@ -30,9 +56,8 @@ class ApiRoutesMixin:
             self.send_json(result)
             return
         if parsed.path == "/api/user-messages/options":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_normal_current()
+            if not current:
                 return
             self.send_json(self.list_user_message_options(current))
             return
@@ -50,84 +75,68 @@ class ApiRoutesMixin:
             self.send_json(self.list_announcements())
             return
         if parsed.path == "/api/member-cert-requests":
-            current = get_current_auth(self)
-            if not current.get("authenticated"):
-                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_current_auth()
+            if not current:
                 return
             query = parse_qs(parsed.query)
             member_id = query.get("member_id", [""])[0].strip() or None
-            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            mark_read = self._query_flag(query, "mark_read")
             self.send_json(self.list_member_cert_requests(current, member_id=member_id, mark_read=mark_read))
             return
         if parsed.path == "/api/member-cert-requests/mine":
-            current = get_current_auth(self)
-            if not current.get("authenticated"):
-                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_current_auth()
+            if not current:
                 return
             query = parse_qs(parsed.query)
-            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            mark_read = self._query_flag(query, "mark_read")
             self.send_json(self.list_member_cert_requests(current, mine=True, mark_read=mark_read))
             return
         if parsed.path == "/api/admin-role-requests":
-            current = get_current_auth(self)
-            if not current.get("authenticated"):
-                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_current_auth()
+            if not current:
                 return
             query = parse_qs(parsed.query)
-            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            mark_read = self._query_flag(query, "mark_read")
             self.send_json(self.list_admin_role_requests(current, mark_read=mark_read))
             return
         if parsed.path == "/api/identity-swap-requests":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_normal_current()
+            if not current:
                 return
             query = parse_qs(parsed.query)
-            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            mark_read = self._query_flag(query, "mark_read")
             self.send_json(self.list_identity_swap_requests(current, mark_read=mark_read))
             return
         if parsed.path == "/api/user-messages":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_normal_current()
+            if not current:
                 return
             query = parse_qs(parsed.query)
-            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
-            limit = query.get("limit", ["200"])[0]
-            try:
-                limit = max(1, min(500, int(limit)))
-            except (TypeError, ValueError):
-                limit = 200
+            mark_read = self._query_flag(query, "mark_read")
+            limit = self._query_int(query, "limit", default=200, minimum=1, maximum=500)
             self.send_json(self.list_user_messages(current, mark_read=mark_read, limit=limit))
             return
         if parsed.path == "/api/group-chats":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_normal_current()
+            if not current:
                 return
             self.send_json(self.list_group_chats(current))
             return
         if parsed.path == "/api/group-chat-invitations":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_normal_current()
+            if not current:
                 return
             query = parse_qs(parsed.query)
-            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
+            mark_read = self._query_flag(query, "mark_read")
             self.send_json(self.list_group_chat_invitations(current, mark_read=mark_read))
             return
         if parsed.path.startswith("/api/group-chats/") and parsed.path.endswith("/messages"):
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_normal_current()
+            if not current:
                 return
             query = parse_qs(parsed.query)
-            mark_read = query.get("mark_read", ["0"])[0] in {"1", "true", "yes"}
-            limit = query.get("limit", ["100"])[0]
-            try:
-                limit = max(1, min(200, int(limit)))
-            except (TypeError, ValueError):
-                limit = 100
+            mark_read = self._query_flag(query, "mark_read")
+            limit = self._query_int(query, "limit", default=100, minimum=1, maximum=200)
             group_chat_id = parsed.path.strip("/").split("/")[2]
             self.list_group_chat_messages(current, group_chat_id, mark_read=mark_read, limit=limit)
             return
@@ -184,19 +193,18 @@ class ApiRoutesMixin:
             self.upload_current_user_avatar(user)
             return
         if parsed.path == "/api/profile/me/member-link":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_normal_current()
+            if not current:
                 return
             payload = self.read_json()
             self.link_current_user_member(current, payload)
             return
         if parsed.path == "/api/profile/me/identity-swap":
-            user = self.require_normal_user()
-            if not user:
+            current = self._require_normal_current()
+            if not current:
                 return
             payload = self.read_json()
-            self.create_identity_swap_request({"authenticated": True, "user": user, "is_admin": False}, payload)
+            self.create_identity_swap_request(current, payload)
             return
         if parsed.path == "/api/login":
             AuthHandler(self).login()
@@ -234,9 +242,8 @@ class ApiRoutesMixin:
             self.touch_member(member_id)
             return
         if parsed.path == "/api/members/import":
-            current = get_current_auth(self)
-            if not current.get("authenticated"):
-                self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_current_auth()
+            if not current:
                 return
             user = current.get("user") or {}
             if not self.has_permission(user, "manage_members"):
@@ -245,84 +252,80 @@ class ApiRoutesMixin:
             self.import_members_from_excel()
             return
         if parsed.path == "/api/member-cert-requests":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("user", {}).get("role") != ROLE_GUEST:
+            current = self._require_current_auth()
+            if not current:
+                return
+            if current.get("user", {}).get("role") != ROLE_GUEST:
                 self.send_json({"error": "仅 Guest 可以发起认证申请"}, status=HTTPStatus.FORBIDDEN)
                 return
             payload = self.read_json()
             self.create_member_cert_request(current, payload)
             return
         if parsed.path == "/api/admin-role-requests":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "仅普通用户可申请盟主管理角色"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN, error_message="仅普通用户可申请盟主管理角色")
+            if not current:
                 return
             payload = self.read_json()
             self.create_admin_role_request(current, payload)
             return
         if parsed.path == "/api/identity-swap-requests":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "仅普通用户可发起身份交换申请"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN, error_message="仅普通用户可发起身份交换申请")
+            if not current:
                 return
             payload = self.read_json()
             self.create_identity_swap_request(current, payload)
             return
         if parsed.path == "/api/user-messages":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN)
+            if not current:
                 return
             payload = self.read_json()
             self.create_user_message(current, payload)
             return
         if parsed.path == "/api/group-chats":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN)
+            if not current:
                 return
             payload = self.read_json()
             self.create_group_chat(current, payload)
             return
         if parsed.path.startswith("/api/group-chats/") and parsed.path.endswith("/messages"):
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN)
+            if not current:
                 return
             payload = self.read_json()
             group_chat_id = parsed.path.strip("/").split("/")[2]
             self.create_group_chat_message(current, group_chat_id, payload)
             return
         if parsed.path.startswith("/api/group-chats/") and parsed.path.endswith("/invite"):
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN)
+            if not current:
                 return
             payload = self.read_json()
             group_chat_id = parsed.path.strip("/").split("/")[2]
             self.create_group_chat_invitation(current, group_chat_id, payload)
             return
         if parsed.path.startswith("/api/group-chats/") and parsed.path.endswith("/mute"):
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN)
+            if not current:
                 return
             payload = self.read_json()
             group_chat_id = parsed.path.strip("/").split("/")[2]
             self.set_group_chat_member_mute(current, group_chat_id, payload)
             return
         if parsed.path.startswith("/api/group-chat-invitations/"):
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN)
+            if not current:
                 return
             payload = self.read_json()
             invitation_id = parsed.path.rsplit("/", 1)[-1]
             self.review_group_chat_invitation(current, invitation_id, payload)
             return
         if parsed.path.startswith("/api/member-cert-requests/"):
-            current = get_current_auth(self)
-            if not current.get("authenticated") or not self.has_permission(current.get("user") or {}, "manage_members"):
+            current = self._require_current_auth()
+            if not current:
+                return
+            if not self.has_permission(current.get("user") or {}, "manage_members"):
                 self.send_json({"error": "当前账号没有审核认证申请的权限"}, status=HTTPStatus.FORBIDDEN)
                 return
             payload = self.read_json()
@@ -338,9 +341,8 @@ class ApiRoutesMixin:
             self.review_admin_role_request(request_id, payload, {"authenticated": True, "user": user})
             return
         if parsed.path.startswith("/api/identity-swap-requests/"):
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "仅普通用户可处理身份交换申请"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN, error_message="仅普通用户可处理身份交换申请")
+            if not current:
                 return
             payload = self.read_json()
             request_id = parsed.path.rsplit("/", 1)[-1]
@@ -436,9 +438,8 @@ class ApiRoutesMixin:
             self.delete_current_user_avatar(user)
             return
         if parsed.path == "/api/profile/me/member-link":
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.UNAUTHORIZED)
+            current = self._require_normal_current()
+            if not current:
                 return
             self.unlink_current_user_member(current)
             return
@@ -480,9 +481,8 @@ class ApiRoutesMixin:
             self.delete_melon_post(user, melon_id)
             return
         if parsed.path.startswith("/api/group-chats/") and "/members/" in parsed.path:
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN)
+            if not current:
                 return
             parts = parsed.path.strip("/").split("/")
             if len(parts) != 5 or parts[3] != "members":
@@ -491,9 +491,8 @@ class ApiRoutesMixin:
             self.remove_group_chat_member(current, parts[2], parts[4])
             return
         if parsed.path.startswith("/api/group-chats/"):
-            current = get_current_auth(self)
-            if not current.get("authenticated") or current.get("is_admin"):
-                self.send_json({"error": "请先登录普通账号"}, status=HTTPStatus.FORBIDDEN)
+            current = self._require_normal_current(status=HTTPStatus.FORBIDDEN)
+            if not current:
                 return
             group_chat_id = parsed.path.rsplit("/", 1)[-1]
             self.delete_group_chat(current, group_chat_id)

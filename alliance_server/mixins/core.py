@@ -192,14 +192,14 @@ class CoreHandlerMixin:
             return None
         return start, min(end, file_size - 1)
 
-    def handle_melon_websocket_upgrade(self):
+    def complete_websocket_handshake(self):
         upgrade_header = (self.headers.get("Upgrade") or "").lower()
         connection_header = (self.headers.get("Connection") or "").lower()
         key = self.headers.get("Sec-WebSocket-Key")
         version = self.headers.get("Sec-WebSocket-Version")
         if upgrade_header != "websocket" or "upgrade" not in connection_header or not key or version != "13":
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid WebSocket handshake")
-            return
+            return False
 
         accept_value = base64.b64encode(
             hashlib.sha1((key + WS_MAGIC_GUID).encode("utf-8")).digest()
@@ -209,6 +209,11 @@ class CoreHandlerMixin:
         self.send_header("Connection", "Upgrade")
         self.send_header("Sec-WebSocket-Accept", accept_value)
         self.end_headers()
+        return True
+
+    def handle_melon_websocket_upgrade(self):
+        if not self.complete_websocket_handshake():
+            return
 
         client = self.melon_websocket_client_class(self.connection, self.client_address)
         self.register_ws_client(client)
@@ -224,22 +229,8 @@ class CoreHandlerMixin:
             self.send_json({"error": "请先登录"}, status=HTTPStatus.UNAUTHORIZED)
             return
 
-        upgrade_header = (self.headers.get("Upgrade") or "").lower()
-        connection_header = (self.headers.get("Connection") or "").lower()
-        key = self.headers.get("Sec-WebSocket-Key")
-        version = self.headers.get("Sec-WebSocket-Version")
-        if upgrade_header != "websocket" or "upgrade" not in connection_header or not key or version != "13":
-            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid WebSocket handshake")
+        if not self.complete_websocket_handshake():
             return
-
-        accept_value = base64.b64encode(
-            hashlib.sha1((key + WS_MAGIC_GUID).encode("utf-8")).digest()
-        ).decode("ascii")
-        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
-        self.send_header("Upgrade", "websocket")
-        self.send_header("Connection", "Upgrade")
-        self.send_header("Sec-WebSocket-Accept", accept_value)
-        self.end_headers()
 
         client = self.auth_websocket_client_class(self.connection, self.client_address, session_token)
         self.register_auth_ws_client(session_token, client)

@@ -4,7 +4,34 @@ from alliance_server.shared import *
 
 from auth import ROLE_ALLIANCEADMIN, get_current_auth, update_user_sessions_for_user
 
+
+ANNOUNCEMENT_CATEGORY_NOTICE = "公告"
+ANNOUNCEMENT_CATEGORY_MELON = "瓜棚"
+
+
 class MemberGuildMixin:
+    def _announcement_created_at_ts(self, created_at):
+        return int(datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S").timestamp() * 1000) if created_at else None
+
+    def _build_announcement_item(self, *, announcement_id, title, content, category, created_at, author=""):
+        return {
+            "id": int(announcement_id),
+            "title": title,
+            "content": content,
+            "category": category,
+            "created_at": created_at,
+            "created_at_ts": self._announcement_created_at_ts(created_at),
+            "author": author,
+        }
+
+    def _create_announcement_record(self, connection, *, title, content, category, author=""):
+        created_at = now_text()
+        cursor = connection.execute(
+            "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
+            (title, content, category, created_at, author),
+        )
+        return cursor, created_at
+
     def touch_member(self, member_id):
         if not str(member_id).isdigit():
             self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
@@ -124,8 +151,8 @@ class MemberGuildMixin:
             "hills": hills,
             "guilds": flat_guilds,
             "ranking": ranking,
-            "announcements": [item for item in public_announcements if item["category"] == "公告"],
-            "melon_posts": [item for item in public_announcements if item["category"] == "瓜棚"],
+            "announcements": [item for item in public_announcements if item["category"] == ANNOUNCEMENT_CATEGORY_NOTICE],
+            "melon_posts": [item for item in public_announcements if item["category"] == ANNOUNCEMENT_CATEGORY_MELON],
         }
 
     def list_members(self, query):
@@ -169,7 +196,7 @@ class MemberGuildMixin:
                     "content": row["content"],
                     "category": row["category"],
                     "created_at": row["created_at"],
-                    "created_at_ts": int(datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S").timestamp() * 1000) if row["created_at"] else None,
+                    "created_at_ts": self._announcement_created_at_ts(row["created_at"]),
                     "author": row["author"],
                 }
                 for row in rows
@@ -505,29 +532,38 @@ class MemberGuildMixin:
             connection.commit()
         self.send_json({"message": "妖盟删除成功"})
 
-    def create_announcement(self, payload):
+    def parse_announcement_payload(self, payload):
         title = str(payload.get("title", "")).strip()
         content = sanitize_rich_html(payload.get("content", ""))
-        category = str(payload.get("category", "公告")).strip() or "公告"
+        category = str(payload.get("category", ANNOUNCEMENT_CATEGORY_NOTICE)).strip() or ANNOUNCEMENT_CATEGORY_NOTICE
         if not title or not content:
             self.send_json({"error": "标题和内容不能为空"}, status=HTTPStatus.BAD_REQUEST)
-            return
-        if category not in {"公告", "瓜棚"}:
+            return None
+        if category not in {ANNOUNCEMENT_CATEGORY_NOTICE, ANNOUNCEMENT_CATEGORY_MELON}:
             self.send_json({"error": "分类不正确"}, status=HTTPStatus.BAD_REQUEST)
-            return
+            return None
+        return title, content, category
 
-        timestamp = now_text()
+    def create_announcement(self, payload):
+        parsed = self.parse_announcement_payload(payload)
+        if not parsed:
+            return
+        title, content, category = parsed
+
         with open_db() as connection:
-            cursor = connection.execute(
-                "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
-                (title, content, category, timestamp, ""),
+            cursor, timestamp = self._create_announcement_record(
+                connection,
+                title=title,
+                content=content,
+                category=category,
             )
             connection.commit()
 
         self.send_json(
-            {"message": "内容发布成功", "item": {"id": cursor.lastrowid, "title": title, "content": content, "category": category, "created_at": timestamp, "created_at_ts": int(datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)}},
+            {"message": "内容发布成功", "item": self._build_announcement_item(announcement_id=cursor.lastrowid, title=title, content=content, category=category, created_at=timestamp)},
             status=HTTPStatus.CREATED,
         )
+
     def create_melon_post(self, user, payload):
         """Create a melon post - called from /api/melon endpoint."""
         title = str(payload.get("title", "")).strip()
@@ -547,21 +583,24 @@ class MemberGuildMixin:
             self.send_json({"error": "标题和内容不能为空"}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        timestamp = now_text()
         with open_db() as connection:
-            cursor = connection.execute(
-                "INSERT INTO announcements (title, content, category, created_at, author) VALUES (?, ?, ?, ?, ?)",
-                (title, content, "\u74dc\u68da", timestamp, author_name),
+            cursor, timestamp = self._create_announcement_record(
+                connection,
+                title=title,
+                content=content,
+                category=ANNOUNCEMENT_CATEGORY_MELON,
+                author=author_name,
             )
             connection.commit()
         melon_item = {
-            "id": cursor.lastrowid,
-            "title": title,
-            "content": content,
-            "category": "\u74dc\u68da",
-            "created_at": timestamp,
-            "created_at_ts": int(datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").timestamp() * 1000),
-            "author": author_name,
+            **self._build_announcement_item(
+                announcement_id=cursor.lastrowid,
+                title=title,
+                content=content,
+                category=ANNOUNCEMENT_CATEGORY_MELON,
+                created_at=timestamp,
+                author=author_name,
+            ),
             "author_id": user_id,
         }
 
@@ -710,7 +749,6 @@ class MemberGuildMixin:
             self.send_json({"error": "参数无效"}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        user_id = user.get("id") or user.get("admin_id")
         username = user.get("username") or user.get("display_name") or ""
 
         with open_db() as connection:
@@ -724,8 +762,8 @@ class MemberGuildMixin:
                 self.send_json({"error": "瓜棚动态不存在"}, status=HTTPStatus.NOT_FOUND)
                 return
 
-            if str(row["category"] or "").strip() == "\u516c\u544a":
-                self.send_json({"error": "\u74dc\u68da\u52a8\u6001\u4e0d\u5b58\u5728"}, status=HTTPStatus.NOT_FOUND)
+            if str(row["category"] or "").strip() != ANNOUNCEMENT_CATEGORY_MELON:
+                self.send_json({"error": "瓜棚动态不存在"}, status=HTTPStatus.NOT_FOUND)
                 return
 
             # Check if the user is the author (compare by username/display_name)
@@ -766,12 +804,10 @@ class MemberGuildMixin:
         self.send_json({"message": "撤回成功", "deleted_id": int(melon_id)})
 
     def update_announcement(self, announcement_id, payload):
-        title = str(payload.get("title", "")).strip()
-        content = sanitize_rich_html(payload.get("content", ""))
-        category = str(payload.get("category", "公告")).strip() or "公告"
-        if not title or not content:
-            self.send_json({"error": "标题和内容不能为空"}, status=HTTPStatus.BAD_REQUEST)
+        parsed = self.parse_announcement_payload(payload)
+        if not parsed:
             return
+        title, content, category = parsed
 
         with open_db() as connection:
             cursor = connection.execute(

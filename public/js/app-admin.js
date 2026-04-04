@@ -252,7 +252,7 @@ async function handleExcelFileSelected(event) {
   const file = input.files?.[0];
   if (!file) return;
 
-  // 鑾峰彇褰撳墠濡栫洘鐨勪俊鎭?
+  // 获取当前妖盟信息
   const guildKey = state.selectedGuild;
   if (!guildKey) {
     toast("未选择妖盟");
@@ -260,11 +260,8 @@ async function handleExcelFileSelected(event) {
     return;
   }
 
-  // 瑙ｆ瀽guildKey鑾峰彇濡栫洘淇℃伅
-  const parts = guildKey.split("|");
-  const guild_code = parts[0] || "";
-  const guild_prefix = parts[1] || "";
-  const guild_name = parts[2] || "";
+  // 解析 guildKey 获取妖盟信息
+  const { guild_code, guild_prefix, guild: guild_name } = parseGuildKey(guildKey);
 
   const formData = new FormData();
   formData.append("file", file);
